@@ -3,11 +3,44 @@
 
   const EXAM_DATE = new Date("2026-11-14T09:00:00+08:00");
   const STORAGE_KEY = "ipas-ai-quiz-progress-v1";
+  const SETTINGS_KEY = "ipas-ai-quiz-settings-v1";
   const REVIEW_OFFSETS = [1, 3, 7];
   const EXAM_MINUTES = 30;
   const letters = ["A", "B", "C", "D"];
   const bank = window.QUESTION_BANK || [];
   let timerHandle = null;
+  let installPrompt = null;
+
+  function readSettings() {
+    try {
+      return { theme: "system", fontSize: "normal", ...JSON.parse(localStorage.getItem(SETTINGS_KEY)) };
+    } catch (_) {
+      return { theme: "system", fontSize: "normal" };
+    }
+  }
+
+  const settings = readSettings();
+
+  function effectiveTheme() {
+    if (settings.theme !== "system") return settings.theme;
+    return window.matchMedia?.("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+  }
+
+  function applySettings() {
+    const theme = effectiveTheme();
+    document.documentElement.dataset.theme = theme;
+    document.documentElement.dataset.fontSize = settings.fontSize;
+    document.querySelector('meta[name="theme-color"]')?.setAttribute("content", theme === "dark" ? "#071513" : "#0f766e");
+  }
+
+  function saveSettings() {
+    localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
+    applySettings();
+  }
+
+  function isStandalone() {
+    return window.matchMedia?.("(display-mode: standalone)").matches || window.navigator.standalone === true;
+  }
 
   const defaultProgress = () => ({
     attempts: {},
@@ -317,14 +350,22 @@
   }
 
   function appShell(content) {
+    const dark = effectiveTheme() === "dark";
+    const fontLabels = { normal: "標準", large: "大", xlarge: "特大" };
     return `
       <header class="topbar">
         <button class="brand" data-action="home" aria-label="回到首頁">
           <span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span>
-          <span><strong>iPAS 中級刷題站 <b class="version-badge">v1.3</b></strong><small>科目 1＋科目 2・共 ${bank.length} 題</small></span>
+          <span><strong>iPAS 中級刷題站 <b class="version-badge">v1.4</b></strong><small>科目 1＋科目 2・共 ${bank.length} 題</small></span>
         </button>
-        <div class="exam-pill" title="考試日期：2026 年 11 月 14 日"><span>距離考試</span><strong>${daysLeft()} 天</strong></div>
+        <div class="topbar-actions">
+          <button class="utility-button install-button ${isStandalone() ? "is-hidden" : ""}" data-action="install" title="安裝到桌面或手機主畫面" aria-label="安裝 App"><span aria-hidden="true">↓</span><b>安裝 App</b></button>
+          <button class="utility-button" data-action="theme" title="切換深色或淺色模式" aria-label="目前為${dark ? "深色" : "淺色"}模式，按一下切換"><span aria-hidden="true">${dark ? "☀" : "☾"}</span><b>${dark ? "淺色" : "深色"}</b></button>
+          <button class="utility-button" data-action="font" title="調整字體大小" aria-label="目前字體：${fontLabels[settings.fontSize]}，按一下調整"><span aria-hidden="true">A</span><b>${fontLabels[settings.fontSize]}</b></button>
+          <div class="exam-pill" title="考試日期：2026 年 11 月 14 日"><span>距離考試</span><strong>${daysLeft()} 天</strong></div>
+        </div>
       </header>
+      ${navigator.onLine ? "" : '<div class="offline-banner" role="status">目前離線｜題庫與學習進度仍可正常使用</div>'}
       <main>${content}</main>
       <footer>
         <p>本網站為個人學習工具，題目皆為原創練習題，非官方網站或官方題庫。</p>
@@ -509,7 +550,7 @@
   }
 
   function exportProgress() {
-    const payload = { app: "ipas-ai-quiz", version: 3, exportedAt: new Date().toISOString(), progress: state.progress };
+    const payload = { app: "ipas-ai-quiz", version: 4, exportedAt: new Date().toISOString(), progress: state.progress, settings };
     const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
     const url = URL.createObjectURL(blob);
     const anchor = document.createElement("a");
@@ -528,6 +569,11 @@
       const data = JSON.parse(await file.text());
       if (data.app !== "ipas-ai-quiz" || !data.progress || typeof data.progress !== "object") throw new Error("invalid");
       state.progress = migrateProgress(data.progress);
+      if (data.settings && typeof data.settings === "object") {
+        settings.theme = ["system", "light", "dark"].includes(data.settings.theme) ? data.settings.theme : settings.theme;
+        settings.fontSize = ["normal", "large", "xlarge"].includes(data.settings.fontSize) ? data.settings.fontSize : settings.fontSize;
+        saveSettings();
+      }
       saveProgress();
       render();
       toast("學習進度已成功匯入。", "success");
@@ -559,6 +605,9 @@
       if (action === "retry") { state.topic = null; startQuiz(state.mode, state.quiz.length); }
       if (action === "export") exportProgress();
       if (action === "import") document.querySelector("#progress-file")?.click();
+      if (action === "theme") { settings.theme = effectiveTheme() === "dark" ? "light" : "dark"; saveSettings(); render(); }
+      if (action === "font") { const sizes = ["normal", "large", "xlarge"]; settings.fontSize = sizes[(sizes.indexOf(settings.fontSize) + 1) % sizes.length]; saveSettings(); render(); toast(`字體已調整為${{ normal: "標準", large: "大", xlarge: "特大" }[settings.fontSize]}。`, "success"); }
+      if (action === "install") installApp();
     }));
     document.querySelector("#progress-file")?.addEventListener("change", event => importProgress(event.target.files?.[0]));
   }
@@ -569,6 +618,20 @@
     node.textContent = message;
     node.className = `toast show ${type || ""}`;
     window.setTimeout(() => node.classList.remove("show"), 2600);
+  }
+
+  async function installApp() {
+    if (installPrompt) {
+      installPrompt.prompt();
+      await installPrompt.userChoice;
+      installPrompt = null;
+      render();
+      return;
+    }
+    const isiOS = /iphone|ipad|ipod/i.test(navigator.userAgent);
+    window.alert(isiOS
+      ? "請點 Safari 下方的「分享」按鈕，再選「加入主畫面」。"
+      : "請點瀏覽器網址列右側的「安裝」圖示；若沒有看到，請開啟瀏覽器選單並選「安裝應用程式」。");
   }
 
   document.addEventListener("keydown", event => {
@@ -598,6 +661,27 @@
     });
   }
 
+  window.addEventListener("beforeinstallprompt", event => {
+    event.preventDefault();
+    installPrompt = event;
+    render();
+  });
+  window.addEventListener("appinstalled", () => {
+    installPrompt = null;
+    render();
+    toast("iPAS 刷題 App 已安裝完成。", "success");
+  });
+  window.addEventListener("online", () => { render(); toast("網路已恢復連線。", "success"); });
+  window.addEventListener("offline", render);
+  window.matchMedia?.("(prefers-color-scheme: dark)").addEventListener?.("change", () => {
+    if (settings.theme === "system") { applySettings(); render(); }
+  });
+
+  if ("serviceWorker" in navigator) {
+    window.addEventListener("load", () => navigator.serviceWorker.register("./sw.js").catch(() => {}));
+  }
+
+  applySettings();
   registerWebMcpTools();
   render();
 })();
