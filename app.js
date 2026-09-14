@@ -321,7 +321,7 @@
       <header class="topbar">
         <button class="brand" data-action="home" aria-label="回到首頁">
           <span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span>
-          <span><strong>iPAS 中級刷題站 <b class="version-badge">v1.2</b></strong><small>科目 1＋科目 2</small></span>
+          <span><strong>iPAS 中級刷題站 <b class="version-badge">v1.3</b></strong><small>科目 1＋科目 2・共 ${bank.length} 題</small></span>
         </button>
         <div class="exam-pill" title="考試日期：2026 年 11 月 14 日"><span>距離考試</span><strong>${daysLeft()} 天</strong></div>
       </header>
@@ -509,7 +509,7 @@
   }
 
   function exportProgress() {
-    const payload = { app: "ipas-ai-quiz", version: 2, exportedAt: new Date().toISOString(), progress: state.progress };
+    const payload = { app: "ipas-ai-quiz", version: 3, exportedAt: new Date().toISOString(), progress: state.progress };
     const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
     const url = URL.createObjectURL(blob);
     const anchor = document.createElement("a");
@@ -593,7 +593,7 @@
     });
     register({
       name: "start_quiz_session", title: "開始刷題", description: "在畫面上開始科目 1、科目 2 或兩科混合的練習、複習或模擬考。",
-      inputSchema: { type: "object", properties: { subject: { type: "string", enum: ["all", "1", "2"] }, mode: { type: "string", enum: ["practice", "exam", "review"] }, count: { type: "integer", minimum: 1, maximum: 64 } }, required: ["subject", "mode", "count"], additionalProperties: false }, annotations: { readOnlyHint: false, untrustedContentHint: false },
+      inputSchema: { type: "object", properties: { subject: { type: "string", enum: ["all", "1", "2"] }, mode: { type: "string", enum: ["practice", "exam", "review"] }, count: { type: "integer", minimum: 1, maximum: 200 } }, required: ["subject", "mode", "count"], additionalProperties: false }, annotations: { readOnlyHint: false, untrustedContentHint: false },
       execute(input) { if (!input || !["all", "1", "2"].includes(input.subject) || !["practice", "exam", "review"].includes(input.mode) || !Number.isInteger(input.count) || input.count < 1 || input.count > bank.length) throw new Error("刷題設定無效。"); state.subject = input.subject; state.topic = null; startQuiz(input.mode, input.count); return { started: state.screen === "quiz", subject: input.subject, mode: input.mode, questionCount: state.quiz.length }; }
     });
   }
