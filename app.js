@@ -356,7 +356,7 @@
       <header class="topbar">
         <button class="brand" data-action="home" aria-label="回到首頁">
           <span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span>
-          <span><strong>iPAS 中級刷題站 <b class="version-badge">v1.4</b></strong><small>科目 1＋科目 2・共 ${bank.length} 題</small></span>
+          <span><strong>iPAS 中級刷題站 <b class="version-badge">v1.4.1</b></strong><small>科目 1＋科目 2・共 ${bank.length} 題</small></span>
         </button>
         <div class="topbar-actions">
           <button class="utility-button install-button ${isStandalone() ? "is-hidden" : ""}" data-action="install" title="安裝到桌面或手機主畫面" aria-label="安裝 App"><span aria-hidden="true">↓</span><b>安裝 App</b></button>
