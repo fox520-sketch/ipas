@@ -11,6 +11,60 @@
   let timerHandle = null;
   let installPrompt = null;
 
+  const CONCEPT_HINTS = [
+    [/Regression（迴歸）/i, "Regression（迴歸）用來預測連續數值，例如價格、溫度或需求量"],
+    [/Classification（分類）|Accuracy（準確率）/i, "Classification（分類）是在已知類別中判斷所屬類別；Accuracy（準確率）則是分類模型的整體答對比例"],
+    [/Clustering（分群）/i, "Clustering（分群）是在沒有既定標籤時，依資料相似度自動分組"],
+    [/Machine Translation（機器翻譯）/i, "Machine Translation（機器翻譯）處理不同語言之間的自動轉換"],
+    [/Object Detection（物件偵測）/i, "Object Detection（物件偵測）要同時辨識影像中的物件種類與位置"],
+    [/Image Generation（影像生成）/i, "Image Generation（影像生成）是根據提示產生新影像，不是分析既有資料"],
+    [/Computer Vision（電腦視覺）|CNN/i, "Computer Vision（電腦視覺）與 CNN（卷積神經網路）主要處理影像內容"],
+    [/NLP|自然語言處理|Transformer|Attention（注意力）/i, "這類技術主要用於理解或生成文字等序列資料"],
+    [/Token|Tokenization（斷詞）|Context Window（上下文視窗）/i, "這些概念描述模型如何切分及一次處理輸入內容"],
+    [/Prompt Injection（提示注入）/i, "Prompt Injection（提示注入）是惡意指令干擾模型原有規則的安全風險"],
+    [/RAG|Retrieval-Augmented Generation/i, "RAG（檢索增強生成）會先查找外部資料，再把資料提供給生成模型回答"],
+    [/Fine[- ]?tuning（微調）/i, "Fine-tuning（微調）是用特定資料更新模型參數，使模型更適合特定任務"],
+    [/Few-shot|Zero-shot/i, "Few-shot（少樣本）或 Zero-shot（零樣本）描述提示中是否提供少量示例"],
+    [/Temperature|Top-p|Top-K/i, "這些參數會調整生成內容的隨機性與候選範圍，不能保證內容一定正確"],
+    [/Hallucination（幻覺）/i, "Hallucination（幻覺）是模型產生看似合理、實際上不正確或沒有根據的內容"],
+    [/Data Drift（資料漂移）/i, "Data Drift（資料漂移）是上線後輸入資料分布逐漸不同於訓練資料"],
+    [/Model Monitoring（模型監控）|Monitoring（監控）/i, "Model Monitoring（模型監控）用來持續觀察上線後的品質、延遲與異常"],
+    [/Retraining（再訓練）/i, "Retraining（再訓練）是使用較新的資料重新訓練模型，以回應環境變化"],
+    [/Explainability（可解釋性）/i, "Explainability（可解釋性）是讓人理解模型做出預測或決策的大致依據"],
+    [/Human Oversight（人類監督）/i, "Human Oversight（人類監督）是在高風險決策中保留人類審查與介入權"],
+    [/Governance（治理）/i, "Governance（治理）涵蓋規範、權責、風險控管、稽核與持續監督"],
+    [/PoC|Proof of Concept/i, "PoC（概念驗證）用小規模實驗確認技術與需求是否可行"],
+    [/MVP/i, "MVP（最小可行產品）是在功能精簡但可實際使用的版本中驗證價值"],
+    [/KPI/i, "KPI（關鍵績效指標）是事先定義、用來衡量導入成果的量化指標"],
+    [/Baseline（基準線）/i, "Baseline（基準線）是用來比較新方法是否真的優於現況的參考表現"],
+    [/Standardization（標準化）|Z-score/i, "Standardization（標準化）通常把資料轉成平均數約 0、標準差約 1"],
+    [/Normalization（正規化）|Min-Max/i, "Min-Max Normalization（最小最大正規化）通常把數值縮放到固定範圍"],
+    [/Mean（平均數）|平均數/i, "Mean（平均數）會使用全部數值計算，因此容易受到極端值影響"],
+    [/Median（中位數）|中位數/i, "Median（中位數）是排序後的中間位置，通常較不受極端值影響"],
+    [/Mode（眾數）|眾數/i, "Mode（眾數）是資料中出現次數最多的值"],
+    [/Standard Deviation（標準差）|標準差/i, "Standard Deviation（標準差）衡量資料相對平均數的分散程度"],
+    [/p-value|p 值/i, "p-value（p 值）是在虛無假設成立時，觀察到目前或更極端結果的機率"],
+    [/Type I|第一類錯誤|假陽性/i, "Type I Error（第一類錯誤）是實際無差異，卻誤判為有差異"],
+    [/Type II|第二類錯誤|假陰性/i, "Type II Error（第二類錯誤）是實際有差異，卻沒有檢定出來"],
+    [/Correlation（相關）|相關係數/i, "Correlation（相關）只描述一起變動的程度，不能單獨證明因果關係"],
+    [/MAE/i, "MAE（平均絕對誤差）平均計算誤差大小，對極端誤差的放大程度較低"],
+    [/RMSE/i, "RMSE（均方根誤差）會平方誤差，因此對少數巨大錯誤懲罰較重"],
+    [/Missing Value|遺失值/i, "遺失值處理要先了解缺失原因、比例與資料型態，再決定刪除或填補"],
+    [/Outlier|離群值/i, "Outlier（離群值）是明顯偏離多數資料的觀測值，但不一定代表資料錯誤"],
+    [/One-Hot Encoding/i, "One-Hot Encoding（獨熱編碼）把類別拆成多個 0／1 欄位，避免虛假的大小順序"],
+    [/Data Leakage（資料洩漏）/i, "Data Leakage（資料洩漏）是訓練時不當取得未來、答案或測試資料資訊"],
+    [/Train|Training Set|Test Set|Validation/i, "訓練集用來學習，驗證集用來選模型與調參，測試集用來做最後一次客觀評估"],
+    [/Overfitting（過度擬合）/i, "Overfitting（過度擬合）是模型太貼合訓練資料，遇到新資料時表現變差"],
+    [/Sampling|抽樣/i, "Sampling（抽樣）的重點是讓樣本能合理代表母體並降低偏差"],
+    [/ETL/i, "ETL 是 Extract（擷取）、Transform（轉換）、Load（載入）的資料整合流程"],
+    [/SQL|關聯式資料庫/i, "關聯式資料庫適合結構明確、需要交易一致性與表格關聯的資料"],
+    [/NoSQL/i, "NoSQL 適合結構彈性或大規模分散式資料，但仍要依查詢與一致性需求選擇"],
+    [/Encryption|加密/i, "Encryption（加密）保護資料內容，但仍需搭配權限、金鑰與稽核管理"],
+    [/Anonymization|匿名化|去識別/i, "去識別化是降低資料連回特定個人的可能性，仍要評估重新識別風險"],
+    [/Moving Average（移動平均）/i, "Moving Average（移動平均）用鄰近時段平均來平滑短期波動，但可能產生時間落後"],
+    [/Visualization|視覺化|長條圖|折線圖|散佈圖|圓餅圖/i, "資料視覺化要依變數型態與比較目的選圖，圖表本身不能取代統計或因果證據"]
+  ];
+
   function readSettings() {
     try {
       return { theme: "system", fontSize: "normal", ...JSON.parse(localStorage.getItem(SETTINGS_KEY)) };
@@ -50,7 +104,9 @@
     bestScore: 0,
     totalAnswered: 0,
     totalCorrect: 0,
-    lastStudyDate: null
+    lastStudyDate: null,
+    notes: {},
+    cardIds: []
   });
 
   function dateKey(date = new Date()) {
@@ -72,6 +128,8 @@
     progress.attempts = progress.attempts && typeof progress.attempts === "object" ? progress.attempts : {};
     progress.reviewQueue = progress.reviewQueue && typeof progress.reviewQueue === "object" ? progress.reviewQueue : {};
     progress.wrongIds = Array.isArray(progress.wrongIds) ? progress.wrongIds : [];
+    progress.notes = progress.notes && typeof progress.notes === "object" ? progress.notes : {};
+    progress.cardIds = Array.isArray(progress.cardIds) ? progress.cardIds.filter(id => bank.some(q => q.id === id)) : [];
     progress.wrongIds.forEach(id => {
       if (!progress.reviewQueue[id]) {
         progress.reviewQueue[id] = { stage: 0, originDate: dateKey(), nextDue: dateKey(), reason: "答錯" };
@@ -141,6 +199,20 @@
     };
   }
 
+  function optionExplanation(q, index) {
+    if (index === q.answer) return q.explanation;
+    const option = q.options[index];
+    const match = CONCEPT_HINTS.find(([pattern]) => pattern.test(option));
+    if (match) return `${match[1]}。不過這不是本題情境需要的答案；本題關鍵是：${q.explanation}`;
+    if (/一定|完全|全部|永遠|保證|只要|不需要|不需|隨機|自動歸零|直接公開/.test(option)) {
+      return `這個選項使用過度絕對或不合理的說法，忽略了題目中的條件與風險。本題正確的判斷重點是：${q.explanation}`;
+    }
+    if (/鍵盤|螢幕|檔名|背景顏色|字體|電腦品牌|人數/.test(option)) {
+      return `這是介面、設備或外觀因素，和題目要判斷的 AI（人工智慧）或資料處理方法沒有直接關係。本題重點是：${q.explanation}`;
+    }
+    return `「${option}」沒有符合題目指定的目的或條件，因此不是最佳答案。判斷時應抓住這個重點：${q.explanation}`;
+  }
+
   function currentPool() {
     let pool = state.subject === "all" ? bank : bank.filter(q => q.subject === Number(state.subject));
     if (state.topic) pool = pool.filter(q => q.topic === state.topic);
@@ -205,9 +277,9 @@
 
   function startQuiz(mode, count) {
     state.mode = mode;
-    const pool = mode === "review" ? dueReviewQuestions() : currentPool();
+    const pool = mode === "review" ? dueReviewQuestions() : mode === "cards" ? bank.filter(q => state.progress.cardIds.includes(q.id)) : currentPool();
     if (!pool.length) {
-      toast(mode === "review" ? "今天沒有到期複習，先練新題吧！" : "此範圍目前沒有題目。", "success");
+      toast(mode === "review" ? "今天沒有到期複習，先練新題吧！" : mode === "cards" ? "你還沒有收藏重點卡片。" : "此範圍目前沒有題目。", "success");
       return;
     }
 
@@ -356,7 +428,7 @@
       <header class="topbar">
         <button class="brand" data-action="home" aria-label="回到首頁">
           <span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span>
-          <span><strong>iPAS 中級刷題站 <b class="version-badge">v1.4.1</b></strong><small>科目 1＋科目 2・共 ${bank.length} 題</small></span>
+          <span><strong>iPAS 中級刷題站 <b class="version-badge">v1.5</b></strong><small>科目 1＋科目 2・共 ${bank.length} 題</small></span>
         </button>
         <div class="topbar-actions">
           <button class="utility-button install-button ${isStandalone() ? "is-hidden" : ""}" data-action="install" title="安裝到桌面或手機主畫面" aria-label="安裝 App"><span aria-hidden="true">↓</span><b>安裝 App</b></button>
@@ -382,6 +454,8 @@
     const due = dueReviewQuestions().length;
     const scheduled = scheduledReviewCount();
     const weak = weakTopics();
+    const cardCount = state.progress.cardIds.length;
+    const noteCount = Object.values(state.progress.notes).filter(note => String(note).trim()).length;
     return appShell(`
       <section class="workspace intro-grid">
         <div class="intro-copy">
@@ -396,10 +470,12 @@
           <div class="primary-actions">
             <button class="button primary" data-start="practice">開始 10 題練習 <span>→</span></button>
             <button class="button secondary" data-start="exam">20 題模擬考｜30 分鐘</button>
+            <button class="button secondary card-practice-button" data-start="cards" ${cardCount ? "" : "disabled"}>重點卡複習｜${cardCount} 張</button>
           </div>
           <div class="data-tools">
             <button data-action="export">匯出學習進度</button>
             <button data-action="import">匯入學習進度</button>
+            <span>已寫 ${noteCount} 則筆記</span>
             <input id="progress-file" type="file" accept="application/json,.json" hidden>
           </div>
         </div>
@@ -462,9 +538,11 @@
     const selected = state.mode === "exam" ? (state.examAnswers[q.id] ?? null) : state.selected;
     const pct = Math.round(((state.index + (state.checked ? 1 : 0)) / state.quiz.length) * 100);
     const isCorrect = state.checked && state.selected === q.answer;
+    const note = state.progress.notes[q.id] || "";
+    const isCard = state.progress.cardIds.includes(q.id);
     const card = `
       <article class="question-card">
-        <div class="question-tags"><span class="subject-label">科目 ${q.subject}</span><span>${escapeHtml(q.topic)}</span><span>${escapeHtml(q.difficulty)}</span></div>
+        <div class="question-tags"><span class="subject-label">科目 ${q.subject}</span><span>${escapeHtml(q.topic)}</span><span>${escapeHtml(q.difficulty)}</span>${state.mode === "cards" ? '<span class="card-mode-label">重點卡複習</span>' : ""}</div>
         <h1 id="question-title" tabindex="-1">${escapeHtml(q.question)}</h1>
         <div class="options" role="radiogroup" aria-label="答案選項">${q.options.map((option, index) => optionButton(q, option, index, selected)).join("")}</div>
 
@@ -473,10 +551,23 @@
             <div class="answer-status"><span>${isCorrect ? "✓" : "!"}</span><strong>${isCorrect ? "答對了" : `答錯了，正確答案是 ${letters[q.answer]}`}</strong></div>
             <p>${escapeHtml(q.explanation)}</p>
             ${state.confidence === "低" ? `<small>你選了「低信心」，本題仍會加入延遲複習。</small>` : ""}
+            <div class="option-breakdown">
+              <h2>四個選項逐一看</h2>
+              ${q.options.map((option, index) => `<div class="option-reason ${index === q.answer ? "is-correct" : index === state.selected ? "is-chosen-wrong" : ""}"><span>${letters[index]}</span><div><strong>${index === q.answer ? "正確答案" : index === state.selected ? "你選的答案" : "錯誤選項"}｜${escapeHtml(option)}</strong><p>${escapeHtml(optionExplanation(q, index))}</p></div></div>`).join("")}
+            </div>
           </div>
         ` : state.mode !== "exam" ? `
           <fieldset class="confidence"><legend>這題有多確定？</legend>${["低", "中", "高"].map(level => `<button type="button" class="confidence-button ${state.confidence === level ? "active" : ""}" data-confidence="${level}">${level}</button>`).join("")}</fieldset>
         ` : ""}
+
+        <div class="study-tools">
+          <button class="card-toggle ${isCard ? "active" : ""}" data-action="toggle-card" aria-pressed="${isCard}">${isCard ? "★ 已加入重點卡" : "☆ 加入重點卡"}</button>
+          <details class="note-box" ${note ? "open" : ""}>
+            <summary>我的筆記${note ? "｜已儲存" : ""}</summary>
+            <textarea data-note-id="${q.id}" rows="3" maxlength="600" placeholder="用自己的話寫下判斷重點，會記得更久。">${escapeHtml(note)}</textarea>
+            <small>輸入後會自動儲存在目前裝置</small>
+          </details>
+        </div>
 
         <div class="question-actions ${state.mode === "exam" ? "exam-actions" : ""}">
           ${state.mode === "exam" ? `
@@ -517,6 +608,24 @@
     return `<button class="option ${status}" role="radio" aria-checked="${selected === index}" data-option="${index}" ${state.mode !== "exam" && state.checked ? "disabled" : ""}><span class="option-letter">${letters[index]}</span><span>${escapeHtml(option)}</span><i aria-hidden="true">${state.mode !== "exam" && state.checked && index === q.answer ? "✓" : state.mode !== "exam" && state.checked && state.selected === index ? "×" : ""}</i></button>`;
   }
 
+  function resultReviewRow(q, index) {
+    const answer = state.sessionAnswers[index];
+    const isCard = state.progress.cardIds.includes(q.id);
+    return `<div class="review-row ${answer?.correct ? "ok" : "bad"}">
+      <span>${answer?.correct ? "✓" : "×"}</span>
+      <div class="review-content">
+        <strong>${escapeHtml(q.question)}</strong>
+        <small>${subjectName(q.subject)}${state.mode !== "exam" ? `・信心 ${answer?.confidence || "－"}` : ""}</small>
+        ${!answer?.correct ? `<em>${escapeHtml(q.explanation)}</em>` : ""}
+        <details class="result-explanations">
+          <summary>查看四個選項解析</summary>
+          <div>${q.options.map((option, optionIndex) => `<div class="result-option-reason ${optionIndex === q.answer ? "is-correct" : optionIndex === answer?.selected ? "is-chosen-wrong" : ""}"><span>${letters[optionIndex]}</span><p><strong>${escapeHtml(option)}</strong><br>${escapeHtml(optionExplanation(q, optionIndex))}</p></div>`).join("")}</div>
+        </details>
+      </div>
+      <div class="review-side"><b>${answer?.correct ? "答對" : `正解 ${letters[q.answer]}`}</b><button class="mini-card-button ${isCard ? "active" : ""}" data-card-id="${q.id}" aria-pressed="${isCard}">${isCard ? "★ 重點卡" : "☆ 收藏"}</button></div>
+    </div>`;
+  }
+
   function resultView() {
     const correct = state.sessionAnswers.filter(a => a.correct).length;
     const score = Math.round(correct / state.quiz.length * 100);
@@ -526,7 +635,7 @@
       <section class="result-shell workspace">
         <div class="result-hero"><p class="eyebrow">SESSION COMPLETE</p><div class="result-score"><strong>${score}</strong><span>分</span></div><h1>${escapeHtml(message)}</h1><p>答對 ${correct} 題，共 ${state.quiz.length} 題；${lowConfidenceCorrect ? `另有 ${lowConfidenceCorrect} 題雖答對但信心偏低，已安排複習。` : "本次作答已存入學習紀錄。"}</p><div class="primary-actions centered"><button class="button primary" data-action="retry">再練一次 <span>→</span></button><button class="button secondary" data-action="home">回學習地圖</button></div></div>
         <div class="review-list"><div class="section-heading"><div><p class="eyebrow">REVIEW</p><h2>本次作答</h2></div><span>${correct}/${state.quiz.length} 正確</span></div>
-          ${state.quiz.map((q, index) => { const answer = state.sessionAnswers[index]; return `<div class="review-row ${answer?.correct ? "ok" : "bad"}"><span>${answer?.correct ? "✓" : "×"}</span><div><strong>${escapeHtml(q.question)}</strong><small>${subjectName(q.subject)}${state.mode !== "exam" ? `・信心 ${answer?.confidence || "－"}` : ""}</small>${!answer?.correct ? `<em>${escapeHtml(q.explanation)}</em>` : ""}</div><b>${answer?.correct ? "答對" : `正解 ${letters[q.answer]}`}</b></div>`; }).join("")}
+          ${state.quiz.map(resultReviewRow).join("")}
         </div>
       </section>
     `);
@@ -549,8 +658,27 @@
     render();
   }
 
+  function toggleCard(id) {
+    if (!id) return;
+    const cards = new Set(state.progress.cardIds);
+    const removing = cards.has(id);
+    if (removing) cards.delete(id); else cards.add(id);
+    state.progress.cardIds = [...cards];
+    saveProgress();
+    render();
+    toast(removing ? "已移出重點卡片。" : "已加入重點卡片。", "success");
+  }
+
+  function saveNote(id, value) {
+    if (!id) return;
+    const text = value.slice(0, 600);
+    if (text.trim()) state.progress.notes[id] = text;
+    else delete state.progress.notes[id];
+    saveProgress();
+  }
+
   function exportProgress() {
-    const payload = { app: "ipas-ai-quiz", version: 4, exportedAt: new Date().toISOString(), progress: state.progress, settings };
+    const payload = { app: "ipas-ai-quiz", version: 5, exportedAt: new Date().toISOString(), progress: state.progress, settings };
     const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
     const url = URL.createObjectURL(blob);
     const anchor = document.createElement("a");
@@ -587,7 +715,7 @@
     document.querySelectorAll("[data-start]").forEach(button => button.addEventListener("click", () => {
       const mode = button.dataset.start;
       state.topic = null;
-      startQuiz(mode, mode === "exam" ? 20 : mode === "review" ? 100 : 10);
+      startQuiz(mode, mode === "exam" ? 20 : mode === "review" || mode === "cards" ? 200 : 10);
     }));
     document.querySelectorAll("[data-quick-subject]").forEach(button => button.addEventListener("click", () => { state.subject = button.dataset.quickSubject; state.topic = null; startQuiz("practice", 10); }));
     document.querySelectorAll("[data-topic]").forEach(button => button.addEventListener("click", () => { state.subject = button.dataset.topicSubject; state.topic = button.dataset.topic; startQuiz("practice", 10); }));
@@ -605,10 +733,13 @@
       if (action === "retry") { state.topic = null; startQuiz(state.mode, state.quiz.length); }
       if (action === "export") exportProgress();
       if (action === "import") document.querySelector("#progress-file")?.click();
+      if (action === "toggle-card") toggleCard(state.quiz[state.index]?.id);
       if (action === "theme") { settings.theme = effectiveTheme() === "dark" ? "light" : "dark"; saveSettings(); render(); }
       if (action === "font") { const sizes = ["normal", "large", "xlarge"]; settings.fontSize = sizes[(sizes.indexOf(settings.fontSize) + 1) % sizes.length]; saveSettings(); render(); toast(`字體已調整為${{ normal: "標準", large: "大", xlarge: "特大" }[settings.fontSize]}。`, "success"); }
       if (action === "install") installApp();
     }));
+    document.querySelectorAll("[data-card-id]").forEach(button => button.addEventListener("click", () => toggleCard(button.dataset.cardId)));
+    document.querySelectorAll("[data-note-id]").forEach(area => area.addEventListener("input", () => saveNote(area.dataset.noteId, area.value)));
     document.querySelector("#progress-file")?.addEventListener("change", event => importProgress(event.target.files?.[0]));
   }
 
@@ -636,6 +767,7 @@
 
   document.addEventListener("keydown", event => {
     if (state.screen !== "quiz") return;
+    if (["INPUT", "TEXTAREA", "SELECT"].includes(event.target?.tagName) || event.target?.isContentEditable) return;
     const key = event.key.toUpperCase();
     if (letters.includes(key) && !(state.mode !== "exam" && state.checked)) selectOption(letters.indexOf(key));
     else if (event.key === "Enter") {
@@ -652,12 +784,12 @@
     register({
       name: "read_study_progress", title: "讀取刷題進度", description: "讀取作答、正確率、到期複習與各科題庫進度，不修改資料。",
       inputSchema: { type: "object", properties: {}, additionalProperties: false }, annotations: { readOnlyHint: true, untrustedContentHint: false },
-      execute() { return { totalAnswered: state.progress.totalAnswered, accuracyPercent: accuracy(), dueReviewCount: dueReviewQuestions().length, scheduledReviewCount: scheduledReviewCount(), subject1: subjectStats(1), subject2: subjectStats(2), examDaysLeft: daysLeft() }; }
+      execute() { return { totalAnswered: state.progress.totalAnswered, accuracyPercent: accuracy(), dueReviewCount: dueReviewQuestions().length, scheduledReviewCount: scheduledReviewCount(), cardCount: state.progress.cardIds.length, noteCount: Object.keys(state.progress.notes).length, subject1: subjectStats(1), subject2: subjectStats(2), examDaysLeft: daysLeft() }; }
     });
     register({
-      name: "start_quiz_session", title: "開始刷題", description: "在畫面上開始科目 1、科目 2 或兩科混合的練習、複習或模擬考。",
-      inputSchema: { type: "object", properties: { subject: { type: "string", enum: ["all", "1", "2"] }, mode: { type: "string", enum: ["practice", "exam", "review"] }, count: { type: "integer", minimum: 1, maximum: 200 } }, required: ["subject", "mode", "count"], additionalProperties: false }, annotations: { readOnlyHint: false, untrustedContentHint: false },
-      execute(input) { if (!input || !["all", "1", "2"].includes(input.subject) || !["practice", "exam", "review"].includes(input.mode) || !Number.isInteger(input.count) || input.count < 1 || input.count > bank.length) throw new Error("刷題設定無效。"); state.subject = input.subject; state.topic = null; startQuiz(input.mode, input.count); return { started: state.screen === "quiz", subject: input.subject, mode: input.mode, questionCount: state.quiz.length }; }
+      name: "start_quiz_session", title: "開始刷題", description: "在畫面上開始科目 1、科目 2、兩科混合、重點卡片的練習、複習或模擬考。",
+      inputSchema: { type: "object", properties: { subject: { type: "string", enum: ["all", "1", "2"] }, mode: { type: "string", enum: ["practice", "exam", "review", "cards"] }, count: { type: "integer", minimum: 1, maximum: 200 } }, required: ["subject", "mode", "count"], additionalProperties: false }, annotations: { readOnlyHint: false, untrustedContentHint: false },
+      execute(input) { if (!input || !["all", "1", "2"].includes(input.subject) || !["practice", "exam", "review", "cards"].includes(input.mode) || !Number.isInteger(input.count) || input.count < 1 || input.count > bank.length) throw new Error("刷題設定無效。"); state.subject = input.subject; state.topic = null; startQuiz(input.mode, input.count); return { started: state.screen === "quiz", subject: input.subject, mode: input.mode, questionCount: state.quiz.length }; }
     });
   }
 
