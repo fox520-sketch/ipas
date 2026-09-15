@@ -1,7 +1,7 @@
-const CACHE_NAME = "ipas-quiz-v1.6";
+const CACHE_NAME = "ipas-quiz-v1.7";
 const ROOT = self.registration.scope;
 const INDEX_URL = new URL("index.html", ROOT).href;
-const APP_SHELL = ["", "index.html", "styles.css", "questions.js", "questions-s1-extra.js", "questions-s2-extra.js", "app.js", "manifest.webmanifest", "icon-192.png", "icon-512.png"]
+const APP_SHELL = ["", "index.html", "styles.css", "questions.js", "questions-s1-extra.js", "questions-s2-extra.js", "past-questions.js", "app.js", "manifest.webmanifest", "icon-192.png", "icon-512.png"]
   .map(path => new URL(path, ROOT).href);
 
 self.addEventListener("install", event => {

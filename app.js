@@ -9,6 +9,7 @@
   const FULL_EXAM_MINUTES = 60;
   const letters = ["A", "B", "C", "D"];
   const bank = window.QUESTION_BANK || [];
+  const officialPastCount = bank.filter(q => q.sourceType === "official-past").length;
   let timerHandle = null;
   let installPrompt = null;
 
@@ -172,7 +173,9 @@
     mode: "practice",
     custom: { subject: "all", topic: "all", difficulty: "all", count: 10 },
     wrongSubject: "all",
-    wrongTopic: "all"
+    wrongTopic: "all",
+    pastSession: "all",
+    pastSubject: "all"
   };
 
   function saveProgress() {
@@ -242,6 +245,12 @@
     return bank.filter(q => state.progress.wrongIds.includes(q.id));
   }
 
+  function officialPastPool() {
+    return bank.filter(q => q.sourceType === "official-past")
+      .filter(q => state.pastSession === "all" || q.sourceYear === state.pastSession)
+      .filter(q => state.pastSubject === "all" || q.subject === Number(state.pastSubject));
+  }
+
   function dueReviewQuestions() {
     const today = dateKey();
     return bank.filter(q => {
@@ -303,10 +312,11 @@
     const pool = mode === "review" ? dueReviewQuestions()
       : mode === "cards" ? bank.filter(q => state.progress.cardIds.includes(q.id))
       : mode === "wrong" ? filteredWrongQuestions()
+      : mode === "past" ? officialPastPool()
       : mode === "custom" ? customPool()
       : currentPool();
     if (!pool.length) {
-      toast(mode === "review" ? "今天沒有到期複習，先練新題吧！" : mode === "cards" ? "你還沒有收藏重點卡片。" : mode === "wrong" ? "錯題已全部掌握，太棒了！" : "此範圍目前沒有題目。", "success");
+      toast(mode === "review" ? "今天沒有到期複習，先練新題吧！" : mode === "cards" ? "你還沒有收藏重點卡片。" : mode === "wrong" ? "錯題已全部掌握，太棒了！" : mode === "past" ? "此梯次與科目目前沒有已收錄考題。" : "此範圍目前沒有題目。", "success");
       return;
     }
 
@@ -479,7 +489,7 @@
       <header class="topbar">
         <button class="brand" data-action="home" aria-label="回到首頁">
           <span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span>
-          <span><strong>iPAS 中級刷題站 <b class="version-badge">v1.6</b></strong><small>科目 1＋科目 2・共 ${bank.length} 題</small></span>
+          <span><strong>iPAS 中級刷題站 <b class="version-badge">v1.7</b></strong><small>科目 1＋科目 2・共 ${bank.length} 題（含 ${officialPastCount} 題歷屆精選）</small></span>
         </button>
         <div class="topbar-actions">
           <button class="utility-button install-button ${isStandalone() ? "is-hidden" : ""}" data-action="install" title="安裝到桌面或手機主畫面" aria-label="安裝 App"><span aria-hidden="true">↓</span><b>安裝 App</b></button>
@@ -491,7 +501,7 @@
       ${navigator.onLine ? "" : '<div class="offline-banner" role="status">目前離線｜題庫與學習進度仍可正常使用</div>'}
       <main>${content}</main>
       <footer>
-        <p>本網站為個人學習工具，題目皆為原創練習題，非官方網站或官方題庫。</p>
+        <p>本網站為非官方學習工具；歷屆題標示官方公告來源，答案解析由本站整理，其餘為原創練習題。</p>
         <a href="https://ipd.nat.gov.tw/ipas/certification/AIAP/learning-resources" target="_blank" rel="noopener noreferrer">查看 iPAS 官方學習資源 ↗</a>
       </footer>
       <div id="toast" class="toast" role="status" aria-live="polite"></div>
@@ -525,6 +535,7 @@
             <button class="button primary" data-start="practice">開始 10 題練習 <span>→</span></button>
             <button class="button secondary" data-start="exam">20 題模擬考｜30 分鐘</button>
             <button class="button secondary full-exam-button" data-start="full-exam">50 題完整模擬｜60 分鐘</button>
+            <button class="button secondary past-exam-button" data-action="past-center">歷屆考題精選｜${officialPastCount} 題</button>
             <button class="button secondary card-practice-button" data-start="cards" ${cardCount ? "" : "disabled"}>重點卡複習｜${cardCount} 張</button>
             <button class="button secondary wrong-center-button" data-action="wrong-center">錯題中心｜${wrongCount} 題</button>
           </div>
@@ -548,6 +559,8 @@
           </div>
         </aside>
       </section>
+
+      ${pastResourcesView()}
 
       <section class="workspace custom-section">
         <div class="custom-copy"><p class="eyebrow">CUSTOM PRACTICE</p><h2>自訂刷題範圍</h2><p>依科目、章節、難度與題數組合一回專屬練習。</p></div>
@@ -581,6 +594,30 @@
         <div><span>03</span><h3>第 1、3、7 天回想</h3><p>到期題目回到首頁，答對後進入下一階段。</p></div>
       </section>
     `);
+  }
+
+  function pastResourcesView() {
+    const grouped = [
+      { year: "114 年第二梯次", subject: 1, label: "114-2｜科目 1" },
+      { year: "114 年第二梯次", subject: 2, label: "114-2｜科目 2" },
+      { year: "115 年第一次", subject: 1, label: "115-1｜科目 1" },
+      { year: "115 年第一次", subject: 2, label: "115-1｜科目 2" }
+    ];
+    return `
+      <section class="workspace past-section" id="past-exams">
+        <div class="section-heading"><div><p class="eyebrow">OFFICIAL PAST EXAMS</p><h2>歷屆考題精選</h2></div><span>官方公告題目＋本站白話解析</span></div>
+        <div class="past-summary">
+          <div><strong>${officialPastCount}</strong><span>題已收錄</span></div>
+          <p>目前收錄官方公開的 114 年第二梯次、115 年第一次，科目 1 與科目 2 各 5 題。每題保留年度與原題號，方便回查官方 PDF。</p>
+          <button class="button primary" data-past-all>兩梯次混合練習 →</button>
+        </div>
+        <div class="past-grid">${grouped.map(item => {
+          const questions = bank.filter(q => q.sourceType === "official-past" && q.sourceYear === item.year && q.subject === item.subject);
+          const sourceUrl = questions[0]?.sourceUrl;
+          return `<article class="past-card"><p>${escapeHtml(item.year)}</p><h3>${item.subject === 1 ? "人工智慧技術<br>應用與規劃" : "大數據處理<br>分析與應用"}</h3><strong>${questions.length} 題精選</strong><div><button data-past-session="${escapeHtml(item.year)}" data-past-subject="${item.subject}">開始作答 →</button>${sourceUrl ? `<a href="${sourceUrl}" target="_blank" rel="noopener noreferrer">官方完整 PDF ↗</a>` : ""}</div></article>`;
+        }).join("")}</div>
+        <p class="source-note">考題來源：經濟部產業發展署 iPAS 官方「中級能力鑑定試題公告」。題目答案依官方公告，白話解析由本站整理。</p>
+      </section>`;
   }
 
   function historyView(items) {
@@ -662,7 +699,8 @@
     const isCard = state.progress.cardIds.includes(q.id);
     const card = `
       <article class="question-card">
-        <div class="question-tags"><span class="subject-label">科目 ${q.subject}</span><span>${escapeHtml(q.topic)}</span><span>${escapeHtml(q.difficulty)}</span>${state.mode === "cards" ? '<span class="card-mode-label">重點卡複習</span>' : ""}</div>
+        <div class="question-tags"><span class="subject-label">科目 ${q.subject}</span><span>${escapeHtml(q.topic)}</span><span>${escapeHtml(q.difficulty)}</span>${state.mode === "cards" ? '<span class="card-mode-label">重點卡複習</span>' : ""}${q.sourceType === "official-past" ? `<span class="past-mode-label">歷屆｜${escapeHtml(q.sourceYear)}・第 ${q.sourceQuestion} 題</span>` : ""}</div>
+        ${q.sourceType === "official-past" ? `<a class="question-source" href="${q.sourceUrl}" target="_blank" rel="noopener noreferrer">查看這題的官方公告試題 PDF ↗</a>` : ""}
         <h1 id="question-title" tabindex="-1">${escapeHtml(q.question)}</h1>
         <div class="options" role="radiogroup" aria-label="答案選項">${q.options.map((option, index) => optionButton(q, option, index, selected)).join("")}</div>
 
@@ -735,7 +773,7 @@
       <span>${answer?.correct ? "✓" : "×"}</span>
       <div class="review-content">
         <strong>${escapeHtml(q.question)}</strong>
-        <small>${subjectName(q.subject)}${state.mode !== "exam" ? `・信心 ${answer?.confidence || "－"}` : ""}</small>
+        <small>${subjectName(q.subject)}${q.sourceType === "official-past" ? `・${escapeHtml(q.sourceYear)}第 ${q.sourceQuestion} 題` : ""}${state.mode !== "exam" ? `・信心 ${answer?.confidence || "－"}` : ""}</small>
         ${!answer?.correct ? `<em>${escapeHtml(q.explanation)}</em>` : ""}
         <details class="result-explanations">
           <summary>查看四個選項解析</summary>
@@ -810,7 +848,7 @@
   }
 
   function exportProgress() {
-    const payload = { app: "ipas-ai-quiz", version: 6, exportedAt: new Date().toISOString(), progress: state.progress, settings };
+    const payload = { app: "ipas-ai-quiz", version: 7, exportedAt: new Date().toISOString(), progress: state.progress, settings };
     const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
     const url = URL.createObjectURL(blob);
     const anchor = document.createElement("a");
@@ -852,6 +890,8 @@
     }));
     document.querySelectorAll("[data-quick-subject]").forEach(button => button.addEventListener("click", () => { state.subject = button.dataset.quickSubject; state.topic = null; startQuiz("practice", 10); }));
     document.querySelectorAll("[data-topic]").forEach(button => button.addEventListener("click", () => { state.subject = button.dataset.topicSubject; state.topic = button.dataset.topic; startQuiz("practice", 10); }));
+    document.querySelectorAll("[data-past-session]").forEach(button => button.addEventListener("click", () => { state.pastSession = button.dataset.pastSession; state.pastSubject = button.dataset.pastSubject; startQuiz("past", 50); }));
+    document.querySelector("[data-past-all]")?.addEventListener("click", () => { state.pastSession = "all"; state.pastSubject = "all"; startQuiz("past", officialPastCount); });
     document.querySelectorAll("[data-option]").forEach(button => button.addEventListener("click", () => selectOption(Number(button.dataset.option))));
     document.querySelectorAll("[data-confidence]").forEach(button => button.addEventListener("click", () => { state.confidence = button.dataset.confidence; render(); }));
     document.querySelectorAll("[data-jump]").forEach(button => button.addEventListener("click", () => goToQuestion(Number(button.dataset.jump))));
@@ -865,6 +905,7 @@
       if (action === "home" || action === "quit") { clearTimer(); state.screen = "home"; render(); }
       if (action === "retry") { state.topic = null; startQuiz(state.mode, state.quiz.length, state.examMinutes); }
       if (action === "wrong-center") { state.screen = "wrong"; render(); window.scrollTo({ top: 0, behavior: "smooth" }); }
+      if (action === "past-center") document.querySelector("#past-exams")?.scrollIntoView({ behavior: "smooth", block: "start" });
       if (action === "start-wrong") startQuiz("wrong", filteredWrongQuestions().length);
       if (action === "start-custom") startQuiz("custom", state.custom.count);
       if (action === "export") exportProgress();
@@ -925,14 +966,14 @@
     if (!context?.registerTool) return;
     const register = tool => { try { void Promise.resolve(context.registerTool(tool)).catch(() => {}); } catch (_) {} };
     register({
-      name: "read_study_progress", title: "讀取刷題進度", description: "讀取作答、正確率、到期複習與各科題庫進度，不修改資料。",
+      name: "read_study_progress", title: "讀取刷題進度", description: "讀取作答、正確率、到期複習、歷屆題數與各科題庫進度，不修改資料。",
       inputSchema: { type: "object", properties: {}, additionalProperties: false }, annotations: { readOnlyHint: true, untrustedContentHint: false },
-      execute() { return { totalAnswered: state.progress.totalAnswered, accuracyPercent: accuracy(), dueReviewCount: dueReviewQuestions().length, scheduledReviewCount: scheduledReviewCount(), wrongCount: state.progress.wrongIds.length, cardCount: state.progress.cardIds.length, noteCount: Object.keys(state.progress.notes).length, examHistoryCount: state.progress.history.filter(item => item.mode === "exam").length, subject1: subjectStats(1), subject2: subjectStats(2), examDaysLeft: daysLeft() }; }
+      execute() { return { totalAnswered: state.progress.totalAnswered, accuracyPercent: accuracy(), dueReviewCount: dueReviewQuestions().length, scheduledReviewCount: scheduledReviewCount(), wrongCount: state.progress.wrongIds.length, cardCount: state.progress.cardIds.length, noteCount: Object.keys(state.progress.notes).length, officialPastCount, examHistoryCount: state.progress.history.filter(item => item.mode === "exam").length, subject1: subjectStats(1), subject2: subjectStats(2), examDaysLeft: daysLeft() }; }
     });
     register({
-      name: "start_quiz_session", title: "開始刷題", description: "在畫面上開始科目 1、科目 2、兩科混合、錯題或重點卡片的練習、複習或模擬考。",
-      inputSchema: { type: "object", properties: { subject: { type: "string", enum: ["all", "1", "2"] }, mode: { type: "string", enum: ["practice", "exam", "review", "cards", "wrong"] }, count: { type: "integer", minimum: 1, maximum: 200 } }, required: ["subject", "mode", "count"], additionalProperties: false }, annotations: { readOnlyHint: false, untrustedContentHint: false },
-      execute(input) { if (!input || !["all", "1", "2"].includes(input.subject) || !["practice", "exam", "review", "cards", "wrong"].includes(input.mode) || !Number.isInteger(input.count) || input.count < 1 || input.count > bank.length) throw new Error("刷題設定無效。"); state.subject = input.subject; state.wrongSubject = input.subject; state.topic = null; state.wrongTopic = "all"; startQuiz(input.mode, input.count); return { started: state.screen === "quiz", subject: input.subject, mode: input.mode, questionCount: state.quiz.length }; }
+      name: "start_quiz_session", title: "開始刷題", description: "在畫面上開始科目 1、科目 2、兩科混合、歷屆題、錯題或重點卡片的練習、複習或模擬考。",
+      inputSchema: { type: "object", properties: { subject: { type: "string", enum: ["all", "1", "2"] }, mode: { type: "string", enum: ["practice", "exam", "review", "cards", "wrong", "past"] }, count: { type: "integer", minimum: 1, maximum: 220 } }, required: ["subject", "mode", "count"], additionalProperties: false }, annotations: { readOnlyHint: false, untrustedContentHint: false },
+      execute(input) { if (!input || !["all", "1", "2"].includes(input.subject) || !["practice", "exam", "review", "cards", "wrong", "past"].includes(input.mode) || !Number.isInteger(input.count) || input.count < 1 || input.count > bank.length) throw new Error("刷題設定無效。"); state.subject = input.subject; state.wrongSubject = input.subject; state.pastSubject = input.subject; state.topic = null; state.wrongTopic = "all"; state.pastSession = "all"; startQuiz(input.mode, input.count); return { started: state.screen === "quiz", subject: input.subject, mode: input.mode, questionCount: state.quiz.length }; }
     });
   }
 
