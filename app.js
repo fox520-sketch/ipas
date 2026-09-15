@@ -489,7 +489,7 @@
       <header class="topbar">
         <button class="brand" data-action="home" aria-label="回到首頁">
           <span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span>
-          <span><strong>iPAS 中級刷題站 <b class="version-badge">v1.7</b></strong><small>科目 1＋科目 2・共 ${bank.length} 題（含 ${officialPastCount} 題歷屆精選）</small></span>
+          <span><strong>iPAS 中級刷題站 <b class="version-badge">v1.8</b></strong><small>科目 1＋科目 2・共 ${bank.length} 題（含 ${officialPastCount} 題歷屆題）</small></span>
         </button>
         <div class="topbar-actions">
           <button class="utility-button install-button ${isStandalone() ? "is-hidden" : ""}" data-action="install" title="安裝到桌面或手機主畫面" aria-label="安裝 App"><span aria-hidden="true">↓</span><b>安裝 App</b></button>
@@ -535,7 +535,7 @@
             <button class="button primary" data-start="practice">開始 10 題練習 <span>→</span></button>
             <button class="button secondary" data-start="exam">20 題模擬考｜30 分鐘</button>
             <button class="button secondary full-exam-button" data-start="full-exam">50 題完整模擬｜60 分鐘</button>
-            <button class="button secondary past-exam-button" data-action="past-center">歷屆考題精選｜${officialPastCount} 題</button>
+            <button class="button secondary past-exam-button" data-action="past-center">完整歷屆題庫｜${officialPastCount} 題</button>
             <button class="button secondary card-practice-button" data-start="cards" ${cardCount ? "" : "disabled"}>重點卡複習｜${cardCount} 張</button>
             <button class="button secondary wrong-center-button" data-action="wrong-center">錯題中心｜${wrongCount} 題</button>
           </div>
@@ -605,16 +605,16 @@
     ];
     return `
       <section class="workspace past-section" id="past-exams">
-        <div class="section-heading"><div><p class="eyebrow">OFFICIAL PAST EXAMS</p><h2>歷屆考題精選</h2></div><span>官方公告題目＋本站白話解析</span></div>
+        <div class="section-heading"><div><p class="eyebrow">OFFICIAL PAST EXAMS</p><h2>完整歷屆考題</h2></div><span>官方公告題目＋本站重點解析</span></div>
         <div class="past-summary">
           <div><strong>${officialPastCount}</strong><span>題已收錄</span></div>
-          <p>目前收錄官方公開的 114 年第二梯次、115 年第一次，科目 1 與科目 2 各 5 題。每題保留年度與原題號，方便回查官方 PDF。</p>
+          <p>完整收錄官方公開的 114 年第二梯次、115 年第一次，科目 1 與科目 2 各 50 題。每題保留年度與原題號，方便回查官方 PDF。</p>
           <button class="button primary" data-past-all>兩梯次混合練習 →</button>
         </div>
         <div class="past-grid">${grouped.map(item => {
           const questions = bank.filter(q => q.sourceType === "official-past" && q.sourceYear === item.year && q.subject === item.subject);
           const sourceUrl = questions[0]?.sourceUrl;
-          return `<article class="past-card"><p>${escapeHtml(item.year)}</p><h3>${item.subject === 1 ? "人工智慧技術<br>應用與規劃" : "大數據處理<br>分析與應用"}</h3><strong>${questions.length} 題精選</strong><div><button data-past-session="${escapeHtml(item.year)}" data-past-subject="${item.subject}">開始作答 →</button>${sourceUrl ? `<a href="${sourceUrl}" target="_blank" rel="noopener noreferrer">官方完整 PDF ↗</a>` : ""}</div></article>`;
+          return `<article class="past-card"><p>${escapeHtml(item.year)}</p><h3>${item.subject === 1 ? "人工智慧技術<br>應用與規劃" : "大數據處理<br>分析與應用"}</h3><strong>${questions.length} 題完整收錄</strong><div><button data-past-session="${escapeHtml(item.year)}" data-past-subject="${item.subject}">開始作答 →</button>${sourceUrl ? `<a href="${sourceUrl}" target="_blank" rel="noopener noreferrer">官方完整 PDF ↗</a>` : ""}</div></article>`;
         }).join("")}</div>
         <p class="source-note">考題來源：經濟部產業發展署 iPAS 官方「中級能力鑑定試題公告」。題目答案依官方公告，白話解析由本站整理。</p>
       </section>`;
@@ -701,6 +701,8 @@
       <article class="question-card">
         <div class="question-tags"><span class="subject-label">科目 ${q.subject}</span><span>${escapeHtml(q.topic)}</span><span>${escapeHtml(q.difficulty)}</span>${state.mode === "cards" ? '<span class="card-mode-label">重點卡複習</span>' : ""}${q.sourceType === "official-past" ? `<span class="past-mode-label">歷屆｜${escapeHtml(q.sourceYear)}・第 ${q.sourceQuestion} 題</span>` : ""}</div>
         ${q.sourceType === "official-past" ? `<a class="question-source" href="${q.sourceUrl}" target="_blank" rel="noopener noreferrer">查看這題的官方公告試題 PDF ↗</a>` : ""}
+        ${q.requiresOfficialPdf ? `<div class="pdf-required-note"><strong>本題含附圖或程式碼</strong><span>文字題幹已收錄；請搭配上方官方 PDF 查看原始附圖。</span></div>` : ""}
+        ${q.sourceContext ? `<details class="past-context"><summary>查看共用資料情境</summary><p>${escapeHtml(q.sourceContext)}</p></details>` : ""}
         <h1 id="question-title" tabindex="-1">${escapeHtml(q.question)}</h1>
         <div class="options" role="radiogroup" aria-label="答案選項">${q.options.map((option, index) => optionButton(q, option, index, selected)).join("")}</div>
 
@@ -848,7 +850,7 @@
   }
 
   function exportProgress() {
-    const payload = { app: "ipas-ai-quiz", version: 7, exportedAt: new Date().toISOString(), progress: state.progress, settings };
+    const payload = { app: "ipas-ai-quiz", version: 8, exportedAt: new Date().toISOString(), progress: state.progress, settings };
     const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
     const url = URL.createObjectURL(blob);
     const anchor = document.createElement("a");
@@ -972,7 +974,7 @@
     });
     register({
       name: "start_quiz_session", title: "開始刷題", description: "在畫面上開始科目 1、科目 2、兩科混合、歷屆題、錯題或重點卡片的練習、複習或模擬考。",
-      inputSchema: { type: "object", properties: { subject: { type: "string", enum: ["all", "1", "2"] }, mode: { type: "string", enum: ["practice", "exam", "review", "cards", "wrong", "past"] }, count: { type: "integer", minimum: 1, maximum: 220 } }, required: ["subject", "mode", "count"], additionalProperties: false }, annotations: { readOnlyHint: false, untrustedContentHint: false },
+      inputSchema: { type: "object", properties: { subject: { type: "string", enum: ["all", "1", "2"] }, mode: { type: "string", enum: ["practice", "exam", "review", "cards", "wrong", "past"] }, count: { type: "integer", minimum: 1, maximum: 400 } }, required: ["subject", "mode", "count"], additionalProperties: false }, annotations: { readOnlyHint: false, untrustedContentHint: false },
       execute(input) { if (!input || !["all", "1", "2"].includes(input.subject) || !["practice", "exam", "review", "cards", "wrong", "past"].includes(input.mode) || !Number.isInteger(input.count) || input.count < 1 || input.count > bank.length) throw new Error("刷題設定無效。"); state.subject = input.subject; state.wrongSubject = input.subject; state.pastSubject = input.subject; state.topic = null; state.wrongTopic = "all"; state.pastSession = "all"; startQuiz(input.mode, input.count); return { started: state.screen === "quiz", subject: input.subject, mode: input.mode, questionCount: state.quiz.length }; }
     });
   }

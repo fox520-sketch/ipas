@@ -153,6 +153,11 @@ button:focus-visible, a:focus-visible, select:focus-visible, textarea:focus-visi
 .source-note { margin: 13px 2px 0; color: var(--muted); font-size: .76rem; }
 .question-tags .past-mode-label { color: #674a00; background: #fff0b8; border-color: transparent; font-weight: 800; }
 .question-source { display: inline-block; margin: -10px 0 17px; color: var(--teal-dark); font-size: .78rem; font-weight: 800; text-underline-offset: 4px; }
+.pdf-required-note { display: flex; align-items: center; gap: 10px; margin: -5px 0 16px; padding: 10px 13px; border: 1px solid #e8c55a; border-radius: 11px; background: #fff7d7; color: #604700; font-size: .78rem; }
+.pdf-required-note strong { white-space: nowrap; }
+.past-context { margin: 0 0 20px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface); }
+.past-context summary { padding: 11px 14px; color: var(--teal-dark); font-size: .84rem; font-weight: 800; cursor: pointer; }
+.past-context p { margin: 0; padding: 0 14px 14px; color: var(--muted); font-size: .86rem; line-height: 1.75; overflow-wrap: anywhere; }
 
 .custom-section { display: grid; grid-template-columns: .65fr 1.35fr; gap: 34px; align-items: center; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-lg); padding: 30px; box-shadow: var(--shadow); }
 .custom-copy h2 { margin: 0; font-size: 2rem; line-height: 1.2; letter-spacing: -.04em; }
@@ -254,7 +259,7 @@ button:focus-visible, a:focus-visible, select:focus-visible, textarea:focus-visi
 .question-tags .card-mode-label { color: #6c4b00; background: #fff0b8; border-color: transparent; font-weight: 800; }
 .question-card h1 { margin: 0 0 30px; font-size: clamp(1.35rem, 2.6vw, 1.9rem); line-height: 1.55; letter-spacing: -.025em; }
 .options { display: grid; gap: 11px; }
-.option { width: 100%; display: grid; grid-template-columns: 38px 1fr 24px; gap: 13px; align-items: center; text-align: left; border: 1.5px solid var(--line); background: white; border-radius: 15px; padding: 14px 16px; cursor: pointer; line-height: 1.5; transition: .16s ease; }
+.option { width: 100%; display: grid; grid-template-columns: 38px 1fr 24px; gap: 13px; align-items: center; text-align: left; border: 1.5px solid var(--line); background: white; border-radius: 15px; padding: 14px 16px; cursor: pointer; line-height: 1.5; overflow-wrap: anywhere; transition: .16s ease; }
 .option:hover:not(:disabled) { border-color: var(--teal); transform: translateX(3px); }
 .option.selected { border-color: var(--teal); background: #f1fbf9; }
 .option.correct { border-color: var(--teal); background: #e8f8f4; }
@@ -393,6 +398,8 @@ html[data-theme="dark"] .past-summary { background: #102b28; border: 1px solid #
 html[data-theme="dark"] .past-summary p, html[data-theme="dark"] .past-summary span { color: #c7d9d6; }
 html[data-theme="dark"] .past-card { background: var(--surface); }
 html[data-theme="dark"] .question-tags .past-mode-label { background: #4d472f; color: #f7e9ae; }
+html[data-theme="dark"] .pdf-required-note { background: #3d351d; border-color: #74652c; color: #f4e5aa; }
+html[data-theme="dark"] .past-context { background: var(--surface); }
 html[data-theme="dark"] .card-toggle:hover,
 html[data-theme="dark"] .card-toggle.active,
 html[data-theme="dark"] .mini-card-button.active { background: #4d472f; color: #f7e9ae; border-color: #8d7b3f; }
@@ -441,6 +448,7 @@ html[data-theme="dark"] .trend-track > i b { color: var(--ink); }
   .past-summary .button { grid-column: auto; width: 100%; }
   .past-grid { grid-template-columns: 1fr; }
   .past-card { min-height: 210px; }
+  .pdf-required-note { align-items: flex-start; flex-direction: column; gap: 2px; }
   .dashboard-section { padding-block: 55px; }
   .section-heading { align-items: start; }
   .section-heading > span { display: none; }
