@@ -1,7 +1,7 @@
 {
   "name": "iPAS AI 應用規劃師中級刷題站",
   "short_name": "iPAS 刷題",
-  "description": "科目 1、科目 2 共 200 題原創練習，支援錯題複習與模擬考。",
+  "description": "科目 1、科目 2 共 200 題原創練習，支援自訂刷題、錯題中心與模擬考趨勢。",
   "lang": "zh-Hant-TW",
   "start_url": "./",
   "scope": "./",
