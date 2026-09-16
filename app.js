@@ -8,8 +8,19 @@
   const REVIEW_OFFSETS = [1, 3, 7];
   const SMART_DAILY_COUNT = 20;
   const EXAM_MINUTES = 30;
-  const FULL_EXAM_MINUTES = 60;
+  const FULL_EXAM_MINUTES = 90;
+  const PASS_SCORE = 70;
+  const STABLE_SCORE = 80;
   const letters = ["A", "B", "C", "D"];
+  const MISTAKE_REASONS = [
+    ["concept", "觀念不熟"],
+    ["misread", "看錯題意／否定詞"],
+    ["confuse", "名詞混淆"],
+    ["code", "程式流程看不懂"],
+    ["calculate", "計算失誤"],
+    ["time", "時間不足"],
+    ["careless", "粗心選錯"]
+  ];
   const bank = window.QUESTION_BANK || [];
   const officialPastCount = bank.filter(q => q.sourceType === "official-past").length;
   const PAST_PAPERS = [
@@ -118,7 +129,8 @@
     notes: {},
     cardIds: [],
     history: [],
-    dailyPlans: {}
+    dailyPlans: {},
+    mistakeReasons: {}
   });
 
   function dateKey(date = new Date()) {
@@ -143,6 +155,11 @@
     progress.notes = progress.notes && typeof progress.notes === "object" ? progress.notes : {};
     progress.cardIds = Array.isArray(progress.cardIds) ? progress.cardIds.filter(id => bank.some(q => q.id === id)) : [];
     progress.dailyPlans = progress.dailyPlans && typeof progress.dailyPlans === "object" ? progress.dailyPlans : {};
+    progress.mistakeReasons = progress.mistakeReasons && typeof progress.mistakeReasons === "object" ? progress.mistakeReasons : {};
+    Object.keys(progress.mistakeReasons).forEach(id => {
+      const item = progress.mistakeReasons[id];
+      if (!bank.some(q => q.id === id) || !item || !MISTAKE_REASONS.some(([key]) => key === item.reason)) delete progress.mistakeReasons[id];
+    });
     Object.keys(progress.dailyPlans).forEach(key => {
       const plan = progress.dailyPlans[key];
       if (!plan || typeof plan !== "object") { delete progress.dailyPlans[key]; return; }
@@ -274,7 +291,7 @@
   function activeExamLabel(exam = state.activeExam) {
     if (!exam) return "未完成模擬考";
     if (exam.mode === "past-exam") return `${exam.pastSession}・科目 ${exam.pastSubject}`;
-    return exam.examKind === "full" ? "50 題完整模擬" : "20 題快速模擬";
+    return exam.examKind === "full" ? "50 題正式節奏" : exam.examKind === "speed" ? "50 題快速衝刺" : "20 題快速模擬";
   }
 
   function saveActiveExam() {
@@ -535,8 +552,32 @@
       const remaining = Math.max(0, state.examEndsAt - Date.now());
       const timer = document.querySelector("#exam-timer");
       if (timer) timer.textContent = formatTime(remaining);
+      const pace = examPaceStatus();
+      const paceNode = document.querySelector("#pace-status");
+      if (paceNode) {
+        paceNode.textContent = pace.text;
+        paceNode.className = `pace-status ${pace.level}`;
+      }
       if (remaining <= 0) submitExam(true);
     }, 1000);
+  }
+
+  function examPaceStatus() {
+    const totalMs = Math.max(1, state.examMinutes * 60000);
+    const remaining = Math.max(0, state.examEndsAt - Date.now());
+    const elapsed = Math.max(0, totalMs - remaining);
+    const expected = Math.min(state.quiz.length, Math.floor(elapsed / totalMs * state.quiz.length));
+    const answered = Object.keys(state.examAnswers).length;
+    const delta = answered - expected;
+    if (delta <= -3) return { level: "behind", text: `節奏偏慢｜比建議進度少 ${Math.abs(delta)} 題` };
+    if (delta >= 4) return { level: "ahead", text: `節奏偏快｜比建議進度多 ${delta} 題` };
+    return { level: "on-track", text: "節奏正常｜先做會的，難題先標記" };
+  }
+
+  function examCheckpointText() {
+    if (state.quiz.length === 50 && state.examMinutes === 90) return "節奏參考：30 分鐘完成約 17 題・60 分鐘完成約 34 題・最後留時間檢查";
+    const halfway = Math.ceil(state.quiz.length / 2);
+    return `節奏參考：${Math.round(state.examMinutes / 2)} 分鐘完成約 ${halfway} 題，最後回頭檢查標記題`;
   }
 
   function formatTime(milliseconds) {
@@ -570,6 +611,123 @@
     return `${Math.floor(seconds / 60)} 分 ${String(seconds % 60).padStart(2, "0")} 秒`;
   }
 
+  function isCodeQuestion(q) {
+    if (!q || q.subject !== 2) return false;
+    const text = `${q.question} ${q.options.join(" ")} ${q.sourceContext || ""}`;
+    return Boolean(q.figure) || /Python|Pandas|DataFrame|pd\.|sns\.|sklearn|Scikit|程式碼|虛擬程式碼|pseudocode|fit_transform|transform\(|predict\(|groupby|merge\(|read_csv|fillna|nlargest/i.test(text);
+  }
+
+  function codeQuestionPool() {
+    return bank.filter(isCodeQuestion);
+  }
+
+  function codeTraceSteps(q) {
+    const text = `${q.question} ${q.options.join(" ")} ${q.explanation}`;
+    if (/groupby/i.test(text)) return ["先找 groupby()：它決定要用哪個欄位分組。", "再看中括號：它決定要計算哪個數值欄位。", "最後看 sum()、mean() 或 count()：它決定每組如何彙總。"];
+    if (/merge\(|join/i.test(text)) return ["先確認左右兩張資料表。", "找出共同鍵值，例如 CustomerID（客戶編號）。", "再看 how：inner 只留兩邊都配對到的資料。"];
+    if (/fit_transform|StandardScaler|transform\(/i.test(text)) return ["fit（學習）：只從訓練資料算出平均數、標準差等規則。", "transform（轉換）：使用已學到的同一套規則處理資料。", "考試看到測試資料時，通常只用 transform，避免 Data Leakage（資料洩漏）。"];
+    if (/fillna|NaN|遺失值/i.test(text)) return ["先看遺失比例與資料分布。", "再判斷極端值是否會拉動 Mean（平均數）。", "偏態明顯時，Median（中位數）通常較不受極端值影響。"];
+    if (/nlargest|sort_values|前\s*\d|最高/i.test(text)) return ["先確認要排名的數值欄位。", "若同一對象有多筆資料，先 groupby＋sum 彙總。", "最後用 nlargest 或降冪排序取前幾名。"];
+    if (/read_csv|chunksize|記憶體|OOM/i.test(text)) return ["先判斷資料是否大於可用記憶體。", "使用 chunksize 分批讀取，而不是一次全部載入。", "每批處理後再累加結果，避免 Out of Memory（記憶體不足）。"];
+    if (/pseudocode|虛擬程式碼|演算法/i.test(text)) return ["先找初始化：程式一開始準備了哪些變數。", "再找重複規則：迴圈每次如何更新資料。", "最後看輸出：結果是類別、距離、平均值，還是分群。"];
+    return ["先確認輸入資料是什麼。", "由上往下逐行追蹤每一步如何改變資料。", "最後確認輸出型態與題目要求是否相同。"];
+  }
+
+  function codeTracePanel(q) {
+    if (!isCodeQuestion(q)) return "";
+    return `<div class="code-trace-panel"><div><strong>程式判讀三步追蹤</strong><span>不用背整段程式，照順序看資料怎麼變。</span></div><ol>${codeTraceSteps(q).map(step => `<li>${escapeHtml(step)}</li>`).join("")}</ol></div>`;
+  }
+
+  function sourceTraceView(q) {
+    const source = q.sourceType === "official-past"
+      ? `${escapeHtml(q.sourceYear)}・科目 ${q.subject}・第 ${q.sourceQuestion} 題`
+      : "本站原創練習題";
+    return `<div class="source-trace"><span><strong>題目來源</strong>${source}</span><span><strong>對應範圍</strong>科目 ${q.subject}「${escapeHtml(q.topic)}」</span><span><strong>解析狀態</strong>${q.analysisQuality === "v2.1-reviewed" ? "歷屆題精修完成" : "本站白話解析"}</span><button data-report-id="${q.id}">複製問題回報文字</button></div>`;
+  }
+
+  function mistakeReasonLabel(key) {
+    return MISTAKE_REASONS.find(([value]) => value === key)?.[1] || "尚未標記";
+  }
+
+  function setMistakeReason(id, reason) {
+    if (!id || !MISTAKE_REASONS.some(([key]) => key === reason)) return;
+    const previous = state.progress.mistakeReasons[id] || {};
+    state.progress.mistakeReasons[id] = { reason, count: (previous.count || 0) + (previous.reason === reason ? 0 : 1), updatedAt: new Date().toISOString() };
+    saveProgress();
+    render();
+    toast(`已記錄錯因：${mistakeReasonLabel(reason)}。`, "success");
+  }
+
+  function mistakeReasonPicker(id) {
+    const active = state.progress.mistakeReasons[id]?.reason;
+    return `<div class="mistake-reason-box"><strong>這題為什麼會錯？</strong><p>選一個最主要的原因，系統才知道該怎麼補強。</p><div>${MISTAKE_REASONS.map(([key, label]) => `<button class="${active === key ? "active" : ""}" data-mistake-id="${id}" data-mistake-reason="${key}" aria-pressed="${active === key}">${label}</button>`).join("")}</div></div>`;
+  }
+
+  function mistakeReasonSummary() {
+    const counts = Object.values(state.progress.mistakeReasons).reduce((result, item) => {
+      result[item.reason] = (result[item.reason] || 0) + 1;
+      return result;
+    }, {});
+    return MISTAKE_REASONS.map(([key, label]) => ({ key, label, count: counts[key] || 0 }))
+      .filter(item => item.count)
+      .sort((a, b) => b.count - a.count);
+  }
+
+  function subjectReadiness(subject) {
+    const questions = bank.filter(q => q.subject === subject);
+    const attempts = questions.map(q => state.progress.attempts[q.id]).filter(Boolean);
+    const totalAttempts = attempts.reduce((sum, item) => sum + item.attempts, 0);
+    const totalCorrect = attempts.reduce((sum, item) => sum + item.correct, 0);
+    const accuracyScore = totalAttempts ? Math.round(totalCorrect / totalAttempts * 100) : 0;
+    const coverage = Math.round(attempts.length / questions.length * 100);
+    const recentScores = state.progress.history
+      .map(item => item[`subject${subject}`])
+      .filter(Number.isFinite)
+      .slice(0, 3);
+    const examAverage = recentScores.length ? Math.round(recentScores.reduce((sum, value) => sum + value, 0) / recentScores.length) : null;
+    const score = examAverage === null
+      ? Math.round(accuracyScore * .7 + coverage * .3)
+      : Math.round(examAverage * .6 + accuracyScore * .3 + coverage * .1);
+    const status = score >= STABLE_SCORE ? "穩定達標" : score >= PASS_SCORE ? "接近穩定" : "優先補強";
+    return { subject, score, status, accuracyScore, coverage, examAverage, samples: recentScores.length };
+  }
+
+  function readinessView() {
+    const items = [subjectReadiness(1), subjectReadiness(2)];
+    return `<section class="workspace readiness-section"><div class="section-heading"><div><p class="eyebrow">READINESS</p><h2>兩科應考準備度</h2></div><span>70 分及格線・80 分穩定目標</span></div><div class="readiness-grid">${items.map(item => `<article class="readiness-card ${item.score >= STABLE_SCORE ? "stable" : item.score >= PASS_SCORE ? "near" : "risk"}"><div><span>科目 ${item.subject}</span><strong>${item.score}<small>／100</small></strong></div><h3>${item.status}</h3><div class="readiness-meter"><i style="width:${Math.min(100, item.score)}%"></i><b style="left:70%">70</b><b style="left:80%">80</b></div><p>累積正確率 ${item.accuracyScore}%・題庫接觸 ${item.coverage}%${item.examAverage === null ? "・尚無完整模擬" : `・近 ${item.samples} 回模擬平均 ${item.examAverage} 分`}</p><small>準備度是學習指標，不是正式成績預測。</small></article>`).join("")}</div></section>`;
+  }
+
+  function codeLabView() {
+    const codeQuestions = codeQuestionPool();
+    const attempted = codeQuestions.filter(q => state.progress.attempts[q.id]).length;
+    const wrong = codeQuestions.filter(q => state.progress.wrongIds.includes(q.id)).length;
+    return `<section class="workspace code-lab-section"><div><p class="eyebrow">SUBJECT 2 CODE LAB</p><h2>科目 2 程式判讀專區</h2><p>不必會寫完整程式；練習「輸入 → 處理 → 輸出」，把 Pandas（資料分析套件）與資料流程逐行看懂。</p><button class="button primary" data-start="code">開始 10 題程式判讀 →</button></div><div class="code-lab-stats"><span><strong>${codeQuestions.length}</strong>題程式／附圖題</span><span><strong>${attempted}</strong>題已接觸</span><span><strong>${wrong}</strong>題待補強</span></div></section>`;
+  }
+
+  function final14PlanView() {
+    const remaining = daysLeft();
+    const untilPlan = Math.max(0, remaining - 14);
+    const activeDay = remaining <= 14 ? Math.max(0, remaining) : null;
+    const rows = [
+      [14, "科目 1 完整模擬 90 分鐘", "考後只整理錯因，不急著重做"],
+      [13, "科目 1 弱點補強", "智慧 20 題＋錯題口訣"],
+      [12, "科目 2 程式判讀", "逐行追蹤輸入、處理、輸出"],
+      [11, "科目 2 統計與資料處理", "公式題、遺失值與圖表判讀"],
+      [10, "科目 2 完整模擬 90 分鐘", "記錄未答題與時間不足題"],
+      [9, "科目 2 錯因修補", "優先處理程式流程與名詞混淆"],
+      [8, "兩科智慧 20 題", "完成第 1／3／7 天到期複習"],
+      [7, "科目 1 歷屆完整模擬", "依正式節奏作答與檢查"],
+      [6, "科目 1 精準回測", "只重練昨天錯題與低信心題"],
+      [5, "科目 2 歷屆完整模擬", "把 90 分鐘節奏練熟"],
+      [4, "科目 2 精準回測", "程式題逐行說出用途"],
+      [3, "兩科錯題總整理", "每科只留最容易錯的 20 題"],
+      [2, "輕量回想", "看口訣、重點卡，不再大量做新題"],
+      [1, "考前穩定", "整理證件與路線，提早休息"],
+      [0, "考試日", "先做會的、標記難題、最後回頭檢查"]
+    ];
+    return `<section class="workspace final-plan-section"><div class="section-heading"><div><p class="eyebrow">FINAL 14 DAYS</p><h2>最後 14 天作戰表</h2></div><span>${untilPlan ? `再 ${untilPlan} 天進入最後衝刺` : activeDay === 0 ? "今天上場" : `目前是倒數第 ${activeDay} 天`}</span></div><details ${untilPlan ? "" : "open"}><summary>${untilPlan ? "先查看完整計畫，進入倒數後會自動標出今天" : "今天的任務已自動標示"}</summary><div class="final-plan-grid">${rows.map(([day, task, detail]) => `<article class="${activeDay === day ? "today" : ""}"><b>${day === 0 ? "考試日" : `倒數 ${day} 天`}</b><strong>${task}</strong><span>${detail}</span></article>`).join("")}</div></details></section>`;
+  }
+
   function startQuiz(mode, count, minutes) {
     const beginsExam = mode === "exam" || mode === "past-exam";
     if (beginsExam && state.activeExam) {
@@ -583,10 +741,11 @@
       : mode === "cards" ? bank.filter(q => state.progress.cardIds.includes(q.id))
       : mode === "wrong" ? filteredWrongQuestions()
       : mode === "past" || mode === "past-exam" ? officialPastPool()
+      : mode === "code" ? codeQuestionPool()
       : mode === "custom" ? customPool()
       : currentPool();
     if (!pool.length) {
-      toast(mode === "review" ? "今天沒有到期複習，先練新題吧！" : mode === "smart" ? "今天的智慧題組暫時無法建立。" : mode === "cards" ? "你還沒有收藏重點卡片。" : mode === "wrong" ? "錯題已全部掌握，太棒了！" : mode === "past" || mode === "past-exam" ? "此梯次與科目目前沒有已收錄考題。" : "此範圍目前沒有題目。", "success");
+      toast(mode === "review" ? "今天沒有到期複習，先練新題吧！" : mode === "smart" ? "今天的智慧題組暫時無法建立。" : mode === "cards" ? "你還沒有收藏重點卡片。" : mode === "wrong" ? "錯題已全部掌握，太棒了！" : mode === "code" ? "目前找不到科目 2 程式判讀題。" : mode === "past" || mode === "past-exam" ? "此梯次與科目目前沒有已收錄考題。" : "此範圍目前沒有題目。", "success");
       return;
     }
 
@@ -609,7 +768,7 @@
     state.questionStartedAt = null;
     state.resultFilter = "all";
     state.examMinutes = minutes || EXAM_MINUTES;
-    state.examKind = mode === "past-exam" ? "past" : mode === "exam" && state.examMinutes === FULL_EXAM_MINUTES ? "full" : "quick";
+    state.examKind = mode === "past-exam" ? "past" : mode === "exam" && state.quiz.length === 50 && state.examMinutes === FULL_EXAM_MINUTES ? "full" : mode === "exam" && state.quiz.length === 50 && state.examMinutes === 60 ? "speed" : "quick";
     state.examEndsAt = isExamMode() ? Date.now() + state.examMinutes * 60000 : null;
     state.screen = "quiz";
     if (isExamMode()) saveActiveExam();
@@ -859,7 +1018,7 @@
       <header class="topbar">
         <button class="brand" data-action="home" aria-label="回到首頁">
           <span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span>
-          <span><strong>iPAS 中級刷題站 <b class="version-badge">v2.1</b></strong><small>科目 1＋科目 2・共 ${bank.length} 題（含 ${officialPastCount} 題精修歷屆題）</small></span>
+          <span><strong>iPAS 中級刷題站 <b class="version-badge">v2.2</b></strong><small>科目 1＋科目 2・共 ${bank.length} 題（含 ${officialPastCount} 題精修歷屆題）</small></span>
         </button>
         <div class="topbar-actions">
           <button class="utility-button install-button ${isStandalone() ? "is-hidden" : ""}" data-action="install" title="安裝到桌面或手機主畫面" aria-label="安裝 App"><span aria-hidden="true">↓</span><b>安裝 App</b></button>
@@ -909,12 +1068,13 @@
             <button class="button primary smart-start-button" data-start="smart">每日智慧 20 題｜${planDone}/20 <span>→</span></button>
             <button class="button secondary" data-start="practice">開始 10 題練習</button>
             <button class="button secondary" data-start="exam">20 題模擬考｜30 分鐘</button>
-            <button class="button secondary full-exam-button" data-start="full-exam">50 題完整模擬｜60 分鐘</button>
+            <button class="button secondary full-exam-button" data-start="full-exam">50 題正式節奏｜90 分鐘</button>
+            <button class="button secondary" data-start="speed-exam">50 題快速衝刺｜60 分鐘</button>
             <button class="button secondary past-exam-button" data-action="past-center">完整歷屆題庫｜${officialPastCount} 題</button>
             <button class="button secondary card-practice-button" data-start="cards" ${cardCount ? "" : "disabled"}>重點卡複習｜${cardCount} 張</button>
             <button class="button secondary wrong-center-button" data-action="wrong-center">錯題中心｜${wrongCount} 題</button>
           </div>
-          <p class="simulation-note">50 題／60 分鐘為本站考前練習設定，非官方考試規格。</p>
+          <p class="simulation-note">正式節奏依 115 年簡章設定為每科 50 題、90 分鐘；60 分鐘模式標示為本站快速衝刺。</p>
           <div class="data-tools">
             <button data-action="export">匯出學習進度</button>
             <button data-action="import">匯入學習進度</button>
@@ -949,6 +1109,12 @@
           <article><span>04</span><div><strong>完整模擬</strong><p>目前完成 ${sprint.fullMocks} 回 50 題模擬；考前至少安排 2 回，再依錯題重練。</p></div></article>
         </div>
       </section>
+
+      ${readinessView()}
+
+      ${codeLabView()}
+
+      ${final14PlanView()}
 
       ${pastResourcesView()}
 
@@ -1006,9 +1172,9 @@
           const questions = bank.filter(q => q.sourceType === "official-past" && q.sourceYear === item.year && q.subject === item.subject);
           const sourceUrl = questions[0]?.sourceUrl;
           const stats = paperStats(item.year, item.subject);
-          return `<article class="past-card"><p>${escapeHtml(item.year)}</p><h3>${item.subject === 1 ? "人工智慧技術<br>應用與規劃" : "大數據處理<br>分析與應用"}</h3><strong>${questions.length} 題完整收錄</strong><div class="past-card-score"><span>最近 <b>${stats.latest === null ? "－" : stats.latest}</b></span><span>最高 <b>${stats.best === null ? "－" : stats.best}</b></span></div><div><button data-past-exam="${escapeHtml(item.year)}" data-past-subject="${item.subject}">完整模擬｜原題序</button><button class="past-practice-button" data-past-session="${escapeHtml(item.year)}" data-past-subject="${item.subject}">隨機練習</button>${sourceUrl ? `<a href="${sourceUrl}" target="_blank" rel="noopener noreferrer">官方完整 PDF ↗</a>` : ""}</div></article>`;
+          return `<article class="past-card"><p>${escapeHtml(item.year)}</p><h3>${item.subject === 1 ? "人工智慧技術<br>應用與規劃" : "大數據處理<br>分析與應用"}</h3><strong>${questions.length} 題完整收錄</strong><div class="past-card-score"><span>最近 <b>${stats.latest === null ? "－" : stats.latest}</b></span><span>最高 <b>${stats.best === null ? "－" : stats.best}</b></span></div><div><button data-past-exam="${escapeHtml(item.year)}" data-past-subject="${item.subject}">完整模擬｜90 分鐘</button><button class="past-practice-button" data-past-session="${escapeHtml(item.year)}" data-past-subject="${item.subject}">隨機練習</button>${sourceUrl ? `<a href="${sourceUrl}" target="_blank" rel="noopener noreferrer">官方完整 PDF ↗</a>` : ""}</div></article>`;
         }).join("")}</div>
-        <p class="source-note">考題來源：經濟部產業發展署 iPAS 官方「中級能力鑑定試題公告」。題目答案依官方公告，白話解析由本站整理；60 分鐘為本站練習設定，非官方考試時間規格。</p>
+        <p class="source-note">考題來源：經濟部產業發展署 iPAS 官方「中級能力鑑定試題公告」。題目答案依官方公告，白話解析由本站整理；完整模擬採每科 50 題、90 分鐘正式節奏。</p>
       </section>`;
   }
 
@@ -1023,7 +1189,7 @@
         <div class="section-heading"><div><p class="eyebrow">MOCK EXAM</p><h2>模擬考趨勢</h2></div><span>70 分為本站練習通過線</span></div>
         <div class="history-card">
           <div class="trend-bars" aria-label="最近模擬考分數趨勢">${[...items].reverse().map((item, index) => `<div class="trend-item"><div class="trend-track"><i class="${historyPassed(item) ? "pass" : ""}" style="height:${Math.max(5, item.score)}%"><b>${item.score}</b></i><span class="pass-line" aria-hidden="true"></span></div><small>第 ${Math.max(1, state.progress.history.filter(row => row.mode === "exam" || row.mode === "past-exam").length - items.length + index + 1)} 回</small></div>`).join("")}</div>
-          <div class="history-list">${items.map(item => `<div class="history-row"><span>${new Date(item.date).toLocaleDateString("zh-TW", { month: "numeric", day: "numeric" })}</span><strong>${item.mode === "past-exam" ? `${escapeHtml(item.sourceYear || "歷屆考題")}・科目 ${item.sourceSubject || "－"}` : item.examKind === "full" ? "完整模擬" : "快速模擬"}・${item.count} 題${item.averageTimeMs ? `・均 ${formatDuration(item.averageTimeMs)}` : ""}</strong><span>科 1 ${item.subject1 === null ? "－" : `${item.subject1} 分`}</span><span>科 2 ${item.subject2 === null ? "－" : `${item.subject2} 分`}</span><b class="${historyPassed(item) ? "is-pass" : ""}">${item.score} 分</b></div>`).join("")}</div>
+          <div class="history-list">${items.map(item => `<div class="history-row"><span>${new Date(item.date).toLocaleDateString("zh-TW", { month: "numeric", day: "numeric" })}</span><strong>${item.mode === "past-exam" ? `${escapeHtml(item.sourceYear || "歷屆考題")}・科目 ${item.sourceSubject || "－"}` : item.examKind === "full" ? "正式節奏" : item.examKind === "speed" ? "快速衝刺" : "快速模擬"}・${item.count} 題${item.averageTimeMs ? `・均 ${formatDuration(item.averageTimeMs)}` : ""}</strong><span>科 1 ${item.subject1 === null ? "－" : `${item.subject1} 分`}</span><span>科 2 ${item.subject2 === null ? "－" : `${item.subject2} 分`}</span><b class="${historyPassed(item) ? "is-pass" : ""}">${item.score} 分</b></div>`).join("")}</div>
         </div>
       </section>`;
   }
@@ -1041,6 +1207,7 @@
     const allWrong = wrongPool();
     const questions = filteredWrongQuestions();
     const topics = [...new Set(allWrong.filter(q => state.wrongSubject === "all" || q.subject === Number(state.wrongSubject)).map(q => q.topic))].sort();
+    const reasonSummary = mistakeReasonSummary();
     return appShell(`
       <section class="workspace wrong-shell">
         <div class="wrong-hero">
@@ -1053,11 +1220,12 @@
           <button class="button primary" data-action="start-wrong" ${questions.length ? "" : "disabled"}>練習篩選結果｜${questions.length} 題</button>
           <button class="button secondary" data-action="home">回首頁</button>
         </div>
+        ${reasonSummary.length ? `<div class="mistake-summary"><strong>目前最常見錯因</strong><div>${reasonSummary.map(item => `<span><b>${item.count}</b>${escapeHtml(item.label)}</span>`).join("")}</div></div>` : ""}
         ${questions.length ? `<div class="wrong-list">${questions.map(q => {
           const attempt = state.progress.attempts[q.id] || {};
           const note = state.progress.notes[q.id];
           const isCard = state.progress.cardIds.includes(q.id);
-          return `<article class="wrong-item"><div class="wrong-item-head"><div><span>科目 ${q.subject}</span><span>${escapeHtml(q.topic)}</span><span>${escapeHtml(q.difficulty)}</span></div><small>已作答 ${attempt.attempts || 0} 次</small></div><h2>${escapeHtml(q.question)}</h2><p><strong>判斷重點：</strong>${escapeHtml(q.explanation)}</p><div class="wrong-memory"><p><strong>常見陷阱：</strong>${escapeHtml(questionTrap(q))}</p><p><strong>記憶口訣：</strong>${escapeHtml(questionMnemonic(q))}</p></div><div class="wrong-item-actions"><button class="mini-card-button ${isCard ? "active" : ""}" data-card-id="${q.id}">${isCard ? "★ 已收重點卡" : "☆ 加入重點卡"}</button>${note ? `<span>有個人筆記</span>` : ""}<button class="master-button" data-master-id="${q.id}">✓ 標記已掌握</button></div></article>`;
+          return `<article class="wrong-item"><div class="wrong-item-head"><div><span>科目 ${q.subject}</span><span>${escapeHtml(q.topic)}</span><span>${escapeHtml(q.difficulty)}</span></div><small>已作答 ${attempt.attempts || 0} 次</small></div><h2>${escapeHtml(q.question)}</h2><p><strong>判斷重點：</strong>${escapeHtml(q.explanation)}</p>${mistakeReasonPicker(q.id)}${codeTracePanel(q)}<div class="wrong-memory"><p><strong>常見陷阱：</strong>${escapeHtml(questionTrap(q))}</p><p><strong>記憶口訣：</strong>${escapeHtml(questionMnemonic(q))}</p></div>${sourceTraceView(q)}<div class="wrong-item-actions"><button class="mini-card-button ${isCard ? "active" : ""}" data-card-id="${q.id}">${isCard ? "★ 已收重點卡" : "☆ 加入重點卡"}</button>${note ? `<span>有個人筆記</span>` : ""}<button class="master-button" data-master-id="${q.id}">✓ 標記已掌握</button></div></article>`;
         }).join("")}</div>` : `<div class="empty-analysis"><strong>${allWrong.length ? "目前篩選條件沒有錯題。" : "錯題已全部清空！"}</strong><p>${allWrong.length ? "換一個科目或章節看看。" : "繼續保持，之後答錯的題目會自動出現在這裡。"}</p></div>`}
       </section>`);
   }
@@ -1104,13 +1272,16 @@
             <p>${escapeHtml(q.explanation)}</p>
             ${q.keyPoint ? `<div class="key-point"><strong>一句抓重點</strong><span>${escapeHtml(q.keyPoint)}</span></div>` : ""}
             ${Array.isArray(q.reasoningSteps) && q.reasoningSteps.length ? `<ol class="reasoning-steps">${q.reasoningSteps.map(step => `<li>${escapeHtml(step)}</li>`).join("")}</ol>` : ""}
+            ${codeTracePanel(q)}
             <div class="answer-time">本題作答時間：<strong>${formatDuration(questionTimeMs(q.id))}</strong></div>
             ${state.confidence === "低" ? `<small>你選了「低信心」，本題仍會加入延遲複習。</small>` : ""}
             <div class="memory-cues"><div><strong>⚠ 常見陷阱</strong><p>${escapeHtml(questionTrap(q))}</p></div><div><strong>記憶口訣</strong><p>${escapeHtml(questionMnemonic(q))}</p></div></div>
+            ${isCorrect ? "" : mistakeReasonPicker(q.id)}
             <div class="option-breakdown">
               <h2>四個選項逐一看</h2>
               ${q.options.map((option, index) => `<div class="option-reason ${index === q.answer ? "is-correct" : index === state.selected ? "is-chosen-wrong" : ""}"><span>${letters[index]}</span><div><strong>${index === q.answer ? "正確答案" : index === state.selected ? "你選的答案" : "錯誤選項"}｜${escapeHtml(option)}</strong><p>${escapeHtml(optionExplanation(q, index))}</p></div></div>`).join("")}
             </div>
+            ${sourceTraceView(q)}
           </div>
         ` : !isExamMode() ? `
           <fieldset class="confidence"><legend>這題有多確定？</legend>${["低", "中", "高"].map(level => `<button type="button" class="confidence-button ${state.confidence === level ? "active" : ""}" data-confidence="${level}">${level}</button>`).join("")}</fieldset>
@@ -1140,6 +1311,7 @@
           <button class="back-button" data-action="quit">← ${isExamMode() ? "暫離並保存" : "結束練習"}</button>
           <div class="question-count">${isExamMode() ? `<strong id="exam-timer">${formatTime(state.examEndsAt - Date.now())}</strong>・` : ""}第 ${state.index + 1} 題／共 ${state.quiz.length} 題</div>
           <div class="progress-track wide"><i style="width:${pct}%"></i></div>
+          ${isExamMode() ? `<div id="pace-status" class="pace-status ${examPaceStatus().level}">${examPaceStatus().text}</div>` : ""}
         </div>
         ${isExamMode() ? `<div class="exam-layout">${card}${examNavigator()}</div>` : card}
         <p class="keyboard-hint">鍵盤快捷鍵：A～D 選答案，Enter 確認／下一題</p>
@@ -1151,6 +1323,7 @@
     const answered = Object.keys(state.examAnswers).length;
     return `<aside class="exam-navigator">
       <div><strong>答題狀況</strong><span>${answered}/${state.quiz.length} 已作答</span></div>
+      <p class="exam-checkpoint">${examCheckpointText()}</p>
       <div class="number-grid">${state.quiz.map((q, i) => `<button class="${i === state.index ? "current" : ""} ${state.examAnswers[q.id] !== undefined ? "answered" : ""} ${state.flagged.includes(q.id) ? "flagged" : ""}" data-jump="${i}" aria-label="前往第 ${i + 1} 題">${i + 1}</button>`).join("")}</div>
       <div class="nav-legend"><span><i class="answered"></i>已作答</span><span><i class="flagged"></i>待檢查</span></div>
       <button class="submit-link" data-action="submit">提前交卷</button>
@@ -1192,9 +1365,10 @@
         <strong>${escapeHtml(q.question)}</strong>
         <small>${subjectName(q.subject)}${q.sourceType === "official-past" ? `・${escapeHtml(q.sourceYear)}第 ${q.sourceQuestion} 題` : ""}${!isExamMode() ? `・信心 ${answer?.confidence || "－"}` : ""}・作答 ${formatDuration(answer?.timeMs || 0)}${answer?.flagged ? "・★ 已標記" : ""}</small>
         ${!answer?.correct ? `<em>${escapeHtml(q.explanation)}</em>` : ""}
+        ${!answer?.correct ? mistakeReasonPicker(q.id) : ""}
         <details class="result-explanations">
           <summary>查看精修解法與四個選項</summary>
-          <div>${q.keyPoint ? `<div class="key-point"><strong>一句抓重點</strong><span>${escapeHtml(q.keyPoint)}</span></div>` : ""}${Array.isArray(q.reasoningSteps) ? `<ol class="reasoning-steps compact">${q.reasoningSteps.map(step => `<li>${escapeHtml(step)}</li>`).join("")}</ol>` : ""}<div class="result-memory-cues"><p><strong>常見陷阱：</strong>${escapeHtml(questionTrap(q))}</p><p><strong>記憶口訣：</strong>${escapeHtml(questionMnemonic(q))}</p></div>${q.options.map((option, optionIndex) => `<div class="result-option-reason ${optionIndex === q.answer ? "is-correct" : optionIndex === answer?.selected ? "is-chosen-wrong" : ""}"><span>${letters[optionIndex]}</span><p><strong>${escapeHtml(option)}</strong><br>${escapeHtml(optionExplanation(q, optionIndex))}</p></div>`).join("")}</div>
+          <div>${q.keyPoint ? `<div class="key-point"><strong>一句抓重點</strong><span>${escapeHtml(q.keyPoint)}</span></div>` : ""}${Array.isArray(q.reasoningSteps) ? `<ol class="reasoning-steps compact">${q.reasoningSteps.map(step => `<li>${escapeHtml(step)}</li>`).join("")}</ol>` : ""}${codeTracePanel(q)}<div class="result-memory-cues"><p><strong>常見陷阱：</strong>${escapeHtml(questionTrap(q))}</p><p><strong>記憶口訣：</strong>${escapeHtml(questionMnemonic(q))}</p></div>${q.options.map((option, optionIndex) => `<div class="result-option-reason ${optionIndex === q.answer ? "is-correct" : optionIndex === answer?.selected ? "is-chosen-wrong" : ""}"><span>${letters[optionIndex]}</span><p><strong>${escapeHtml(option)}</strong><br>${escapeHtml(optionExplanation(q, optionIndex))}</p></div>`).join("")}${sourceTraceView(q)}</div>
         </details>
       </div>
       <div class="review-side"><b>${answer?.correct ? "答對" : unanswered ? `未答・正解 ${letters[q.answer]}` : `正解 ${letters[q.answer]}`}</b><button class="mini-card-button ${isCard ? "active" : ""}" data-card-id="${q.id}" aria-pressed="${isCard}">${isCard ? "★ 重點卡" : "☆ 收藏"}</button></div>
@@ -1210,7 +1384,7 @@
     const reviewRows = filteredResultRows();
     const measured = state.sessionAnswers.filter(answer => answer.timeMs > 0);
     const averageTimeMs = measured.length ? Math.round(measured.reduce((sum, answer) => sum + answer.timeMs, 0) / measured.length) : 0;
-    const message = score >= 85 ? "掌握得很穩，繼續保持。" : score >= 70 ? "已接近目標，把錯題補起來。" : "先別急，解析與延遲複習就是進步的起點。";
+    const message = score >= 80 ? "已達穩定 80 分目標，繼續保持。" : score >= 70 ? "已過 70 分線，再把錯題補到穩定 80 分。" : "先別急，找出錯因再精準補強。";
     const subject1Score = sessionSubjectScore(1);
     const subject2Score = sessionSubjectScore(2);
     const passed = subject1Score !== null && subject2Score !== null ? subject1Score >= 70 && subject2Score >= 70 : score >= 70;
@@ -1274,8 +1448,26 @@
     toast("已標記為掌握，並移出錯題清單。", "success");
   }
 
+  async function copyIssueReport(id) {
+    const q = bank.find(item => item.id === id);
+    if (!q) return;
+    const source = q.sourceType === "official-past" ? `${q.sourceYear} 科目 ${q.subject} 第 ${q.sourceQuestion} 題` : `科目 ${q.subject} 原創題 ${q.id}`;
+    const text = `iPAS 刷題站題目回報\n來源：${source}\n主題：${q.topic}\n問題類型：答案疑義／解析看不懂／圖片不清／錯字（請保留一項）\n補充說明：`;
+    try {
+      await navigator.clipboard.writeText(text);
+    } catch (_) {
+      const area = document.createElement("textarea");
+      area.value = text;
+      document.body.appendChild(area);
+      area.select();
+      document.execCommand("copy");
+      area.remove();
+    }
+    toast("問題回報文字已複製，可貼到 GitHub Issue 或訊息中。", "success");
+  }
+
   function exportProgress() {
-    const payload = { app: "ipas-ai-quiz", version: 21, exportedAt: new Date().toISOString(), progress: state.progress, activeExam: state.activeExam, settings };
+    const payload = { app: "ipas-ai-quiz", version: 22, exportedAt: new Date().toISOString(), progress: state.progress, activeExam: state.activeExam, settings };
     const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
     const url = URL.createObjectURL(blob);
     const anchor = document.createElement("a");
@@ -1316,6 +1508,7 @@
       const mode = button.dataset.start;
       state.topic = null;
       if (mode === "full-exam") startQuiz("exam", 50, FULL_EXAM_MINUTES);
+      else if (mode === "speed-exam") startQuiz("exam", 50, 60);
       else startQuiz(mode, mode === "smart" ? SMART_DAILY_COUNT : mode === "exam" ? 20 : mode === "review" || mode === "cards" ? 200 : 10, mode === "exam" ? EXAM_MINUTES : undefined);
     }));
     document.querySelectorAll("[data-quick-subject]").forEach(button => button.addEventListener("click", () => { state.subject = button.dataset.quickSubject; state.topic = null; startQuiz("practice", 10); }));
@@ -1338,7 +1531,7 @@
       if (action === "quit") { if (isExamMode()) saveActiveExam(); clearTimer(); state.screen = "home"; render(); if (isExamMode()) toast("考試進度已保存，可從首頁繼續。", "success"); }
       if (action === "resume-exam") resumeActiveExam();
       if (action === "discard-exam" && window.confirm("確定要放棄這回未完成的模擬考嗎？")) { clearActiveExam(); render(); toast("已放棄未完成的模擬考。", "success"); }
-      if (action === "retry") { state.topic = null; startQuiz(state.mode, state.quiz.length, state.examMinutes); }
+      if (action === "retry") { state.topic = null; startQuiz(state.mode, state.quiz.length, state.examKind === "speed" ? 60 : isExamMode() && state.quiz.length === 50 ? FULL_EXAM_MINUTES : state.examMinutes); }
       if (action === "retry-current-wrong") startMistakeReview(state.sessionAnswers.filter(answer => !answer.correct).map(answer => answer.id));
       if (action === "wrong-center") { state.screen = "wrong"; render(); window.scrollTo({ top: 0, behavior: "smooth" }); }
       if (action === "past-center") document.querySelector("#past-exams")?.scrollIntoView({ behavior: "smooth", block: "start" });
@@ -1352,6 +1545,8 @@
       if (action === "install") installApp();
     }));
     document.querySelectorAll("[data-card-id]").forEach(button => button.addEventListener("click", () => toggleCard(button.dataset.cardId)));
+    document.querySelectorAll("[data-mistake-id]").forEach(button => button.addEventListener("click", () => setMistakeReason(button.dataset.mistakeId, button.dataset.mistakeReason)));
+    document.querySelectorAll("[data-report-id]").forEach(button => button.addEventListener("click", () => copyIssueReport(button.dataset.reportId)));
     document.querySelectorAll("[data-result-filter]").forEach(button => button.addEventListener("click", () => { state.resultFilter = button.dataset.resultFilter; render(); }));
     document.querySelectorAll("[data-master-id]").forEach(button => button.addEventListener("click", () => markWrongMastered(button.dataset.masterId)));
     document.querySelectorAll("[data-note-id]").forEach(area => area.addEventListener("input", () => saveNote(area.dataset.noteId, area.value)));
@@ -1409,8 +1604,8 @@
     });
     register({
       name: "start_quiz_session", title: "開始刷題", description: "在畫面上開始科目 1、科目 2、兩科混合、歷屆題、錯題或重點卡片的練習、複習或模擬考。",
-      inputSchema: { type: "object", properties: { subject: { type: "string", enum: ["all", "1", "2"] }, mode: { type: "string", enum: ["smart", "practice", "exam", "review", "cards", "wrong", "past", "past-exam"] }, count: { type: "integer", minimum: 1, maximum: 400 } }, required: ["subject", "mode", "count"], additionalProperties: false }, annotations: { readOnlyHint: false, untrustedContentHint: false },
-      execute(input) { if (!input || !["all", "1", "2"].includes(input.subject) || !["smart", "practice", "exam", "review", "cards", "wrong", "past", "past-exam"].includes(input.mode) || !Number.isInteger(input.count) || input.count < 1 || input.count > bank.length) throw new Error("刷題設定無效。"); state.subject = input.subject; state.wrongSubject = input.subject; state.pastSubject = input.subject; state.topic = null; state.wrongTopic = "all"; state.pastSession = "all"; startQuiz(input.mode, input.mode === "smart" ? SMART_DAILY_COUNT : input.count); return { started: state.screen === "quiz", subject: input.subject, mode: input.mode, questionCount: state.quiz.length }; }
+      inputSchema: { type: "object", properties: { subject: { type: "string", enum: ["all", "1", "2"] }, mode: { type: "string", enum: ["smart", "practice", "exam", "review", "cards", "wrong", "past", "past-exam", "code"] }, count: { type: "integer", minimum: 1, maximum: 400 } }, required: ["subject", "mode", "count"], additionalProperties: false }, annotations: { readOnlyHint: false, untrustedContentHint: false },
+      execute(input) { if (!input || !["all", "1", "2"].includes(input.subject) || !["smart", "practice", "exam", "review", "cards", "wrong", "past", "past-exam", "code"].includes(input.mode) || !Number.isInteger(input.count) || input.count < 1 || input.count > bank.length) throw new Error("刷題設定無效。"); state.subject = input.subject; state.wrongSubject = input.subject; state.pastSubject = input.subject; state.topic = null; state.wrongTopic = "all"; state.pastSession = "all"; startQuiz(input.mode, input.mode === "smart" ? SMART_DAILY_COUNT : input.count, input.mode === "past-exam" ? FULL_EXAM_MINUTES : undefined); return { started: state.screen === "quiz", subject: input.subject, mode: input.mode, questionCount: state.quiz.length }; }
     });
   }
 
