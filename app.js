@@ -6,6 +6,7 @@
   const SETTINGS_KEY = "ipas-ai-quiz-settings-v1";
   const ACTIVE_EXAM_KEY = "ipas-ai-quiz-active-exam-v2";
   const REVIEW_OFFSETS = [1, 3, 7];
+  const SMART_DAILY_COUNT = 20;
   const EXAM_MINUTES = 30;
   const FULL_EXAM_MINUTES = 60;
   const letters = ["A", "B", "C", "D"];
@@ -116,7 +117,8 @@
     lastStudyDate: null,
     notes: {},
     cardIds: [],
-    history: []
+    history: [],
+    dailyPlans: {}
   });
 
   function dateKey(date = new Date()) {
@@ -140,12 +142,24 @@
     progress.wrongIds = Array.isArray(progress.wrongIds) ? progress.wrongIds : [];
     progress.notes = progress.notes && typeof progress.notes === "object" ? progress.notes : {};
     progress.cardIds = Array.isArray(progress.cardIds) ? progress.cardIds.filter(id => bank.some(q => q.id === id)) : [];
+    progress.dailyPlans = progress.dailyPlans && typeof progress.dailyPlans === "object" ? progress.dailyPlans : {};
+    Object.keys(progress.dailyPlans).forEach(key => {
+      const plan = progress.dailyPlans[key];
+      if (!plan || typeof plan !== "object") { delete progress.dailyPlans[key]; return; }
+      plan.ids = Array.isArray(plan.ids) ? plan.ids.filter(id => bank.some(q => q.id === id)).slice(0, SMART_DAILY_COUNT) : [];
+      plan.completedIds = Array.isArray(plan.completedIds) ? [...new Set(plan.completedIds.filter(id => plan.ids.includes(id)))] : [];
+      plan.correctIds = Array.isArray(plan.correctIds) ? [...new Set(plan.correctIds.filter(id => plan.completedIds.includes(id)))] : [];
+    });
     progress.history = Array.isArray(progress.history) ? progress.history.filter(item => item && typeof item === "object").map(item => ({
       ...item,
       subject1: Number.isFinite(item.subject1) ? item.subject1 : null,
       subject2: Number.isFinite(item.subject2) ? item.subject2 : null,
       sourceSubject: [1, 2].includes(Number(item.sourceSubject)) ? Number(item.sourceSubject) : null,
-      wrongIds: Array.isArray(item.wrongIds) ? item.wrongIds.filter(id => bank.some(q => q.id === id)) : []
+      wrongIds: Array.isArray(item.wrongIds) ? item.wrongIds.filter(id => bank.some(q => q.id === id)) : [],
+      unansweredIds: Array.isArray(item.unansweredIds) ? item.unansweredIds.filter(id => bank.some(q => q.id === id)) : [],
+      flaggedIds: Array.isArray(item.flaggedIds) ? item.flaggedIds.filter(id => bank.some(q => q.id === id)) : [],
+      slowQuestionIds: Array.isArray(item.slowQuestionIds) ? item.slowQuestionIds.filter(id => bank.some(q => q.id === id)) : [],
+      averageTimeMs: Number.isFinite(item.averageTimeMs) ? item.averageTimeMs : null
     })).slice(0, 30) : [];
     progress.wrongIds.forEach(id => {
       if (!progress.reviewQueue[id]) {
@@ -173,13 +187,14 @@
       if (validIds.has(id) && Number.isInteger(value) && value >= 0 && value <= 3) examAnswers[id] = value;
     });
     return {
-      version: 2,
+      version: 3,
       savedAt: input.savedAt || new Date().toISOString(),
       mode: input.mode,
       quiz,
       index: Math.max(0, Math.min(Number(input.index) || 0, quiz.length - 1)),
       examAnswers,
       flagged: Array.isArray(input.flagged) ? input.flagged.filter(id => validIds.has(id)) : [],
+      questionTimes: Object.fromEntries(Object.entries(input.questionTimes || {}).filter(([id, value]) => validIds.has(id) && Number.isFinite(value) && value >= 0).map(([id, value]) => [id, Math.round(value)])),
       examEndsAt: Number(input.examEndsAt) || Date.now(),
       examMinutes: Number(input.examMinutes) || EXAM_MINUTES,
       examKind: input.examKind || "quick",
@@ -210,6 +225,8 @@
     sessionAnswers: [],
     examAnswers: {},
     flagged: [],
+    questionTimes: {},
+    questionStartedAt: null,
     examEndsAt: null,
     examMinutes: EXAM_MINUTES,
     examKind: "quick",
@@ -219,7 +236,8 @@
     wrongTopic: "all",
     pastSession: "all",
     pastSubject: "all",
-    activeExam: readActiveExam()
+    activeExam: readActiveExam(),
+    resultFilter: "all"
   };
 
   function saveProgress() {
@@ -261,14 +279,16 @@
 
   function saveActiveExam() {
     if (!isExamMode() || state.screen !== "quiz" || !state.quiz.length) return;
+    captureCurrentQuestionTime();
     state.activeExam = migrateActiveExam({
-      version: 2,
+      version: 3,
       savedAt: new Date().toISOString(),
       mode: state.mode,
       quiz: state.quiz,
       index: state.index,
       examAnswers: state.examAnswers,
       flagged: state.flagged,
+      questionTimes: state.questionTimes,
       examEndsAt: state.examEndsAt,
       examMinutes: state.examMinutes,
       examKind: state.examKind,
@@ -296,6 +316,8 @@
     state.index = exam.index;
     state.examAnswers = exam.examAnswers;
     state.flagged = exam.flagged;
+    state.questionTimes = exam.questionTimes || {};
+    state.questionStartedAt = null;
     state.examEndsAt = exam.examEndsAt;
     state.examMinutes = exam.examMinutes;
     state.examKind = exam.examKind;
@@ -305,6 +327,7 @@
     state.selected = state.examAnswers[state.quiz[state.index].id] ?? null;
     state.checked = false;
     state.sessionAnswers = [];
+    state.resultFilter = "all";
     state.screen = "quiz";
     render();
     if (state.examEndsAt <= Date.now()) submitExam(true);
@@ -386,6 +409,95 @@
     });
   }
 
+  function stableHash(value) {
+    let hash = 2166136261;
+    for (const char of String(value)) {
+      hash ^= char.charCodeAt(0);
+      hash = Math.imul(hash, 16777619);
+    }
+    return hash >>> 0;
+  }
+
+  function smartPriority(q, today) {
+    const attempt = state.progress.attempts[q.id];
+    const review = state.progress.reviewQueue[q.id];
+    const isDue = review && review.nextDue <= today;
+    const isWrong = state.progress.wrongIds.includes(q.id);
+    const lowConfidence = attempt?.confidence === "低";
+    const accuracyPenalty = attempt?.attempts ? (1 - attempt.correct / attempt.attempts) * 1800 : 0;
+    const slowPenalty = attempt?.attempts && attempt.totalTimeMs ? Math.min(900, Math.round(attempt.totalTimeMs / attempt.attempts / 100)) : 0;
+    const officialBoost = q.sourceType === "official-past" ? 650 : 0;
+    const unseenBoost = attempt ? 0 : 900;
+    const deterministicTieBreak = stableHash(`${today}|${q.id}`) % 500;
+    return (isDue ? 10000 : 0) + (isWrong ? 6500 : 0) + (lowConfidence ? 2800 : 0) + accuracyPenalty + slowPenalty + officialBoost + unseenBoost + deterministicTieBreak;
+  }
+
+  function buildSmartDailyIds(today = dateKey()) {
+    const ranked = bank.map(q => ({ q, score: smartPriority(q, today) })).sort((a, b) => b.score - a.score || a.q.id.localeCompare(b.q.id));
+    const selected = [];
+    [1, 2].forEach(subject => {
+      ranked.filter(item => item.q.subject === subject).slice(0, SMART_DAILY_COUNT / 2).forEach(item => selected.push(item.q.id));
+    });
+    return selected.sort((a, b) => stableHash(`${today}|${a}|order`) - stableHash(`${today}|${b}|order`));
+  }
+
+  function todayPlan() {
+    const today = dateKey();
+    let plan = state.progress.dailyPlans[today];
+    if (!plan || !Array.isArray(plan.ids) || plan.ids.length !== SMART_DAILY_COUNT) {
+      plan = { ids: buildSmartDailyIds(today), completedIds: [], correctIds: [], createdAt: new Date().toISOString() };
+      state.progress.dailyPlans[today] = plan;
+      const keepKeys = Object.keys(state.progress.dailyPlans).sort().slice(-35);
+      state.progress.dailyPlans = Object.fromEntries(keepKeys.map(key => [key, state.progress.dailyPlans[key]]));
+      saveProgress();
+    }
+    return plan;
+  }
+
+  function smartDailyQuestions() {
+    const wanted = new Set(todayPlan().ids);
+    return todayPlan().ids.map(id => bank.find(q => q.id === id)).filter(q => q && wanted.has(q.id));
+  }
+
+  function recordDailyPlanAnswer(id, correct) {
+    if (state.mode !== "smart") return;
+    const plan = todayPlan();
+    if (!plan.completedIds.includes(id)) plan.completedIds.push(id);
+    plan.correctIds = plan.correctIds.filter(item => item !== id);
+    if (correct) plan.correctIds.push(id);
+  }
+
+  function reviewStageCounts() {
+    const today = dateKey();
+    const counts = REVIEW_OFFSETS.map(() => ({ scheduled: 0, due: 0 }));
+    Object.values(state.progress.reviewQueue).forEach(item => {
+      const stage = Math.max(0, Math.min(Number(item.stage) || 0, REVIEW_OFFSETS.length - 1));
+      counts[stage].scheduled += 1;
+      if (item.nextDue <= today) counts[stage].due += 1;
+    });
+    return counts;
+  }
+
+  function dailySprintAdvice() {
+    const remainingDays = Math.max(1, daysLeft());
+    const pastQuestions = bank.filter(q => q.sourceType === "official-past");
+    const unseenPast = pastQuestions.filter(q => !state.progress.attempts[q.id]).length;
+    const fullMocks = state.progress.history.filter(item => (item.mode === "past-exam" || item.examKind === "full") && item.count >= 50).length;
+    const weak = weakTopics()[0];
+    const phase = remainingDays <= 7 ? "最後衝刺" : remainingDays <= 21 ? "模擬強化" : "穩定累積";
+    const dailyPast = unseenPast ? Math.max(1, Math.ceil(unseenPast / Math.max(1, remainingDays - 7))) : 0;
+    return {
+      phase,
+      unseenPast,
+      dailyPast,
+      fullMocks,
+      weak,
+      message: unseenPast
+        ? `每天至少完成 ${dailyPast} 題未作答歷屆題，並先清掉今日到期複習。`
+        : `歷屆題已全數接觸；每天用智慧 20 題維持手感，優先降低錯題數。`
+    };
+  }
+
   function scheduledReviewCount() {
     return Object.keys(state.progress.reviewQueue).length;
   }
@@ -434,6 +546,30 @@
     return `${minutes}:${seconds}`;
   }
 
+  function beginQuestionTiming() {
+    if (state.screen !== "quiz" || !state.quiz[state.index] || (!isExamMode() && state.checked)) return;
+    if (!state.questionStartedAt) state.questionStartedAt = Date.now();
+  }
+
+  function captureCurrentQuestionTime() {
+    const q = state.screen === "quiz" ? state.quiz[state.index] : null;
+    if (!q || !state.questionStartedAt) return 0;
+    const elapsed = Math.max(0, Math.min(Date.now() - state.questionStartedAt, 30 * 60 * 1000));
+    state.questionTimes[q.id] = Math.round((state.questionTimes[q.id] || 0) + elapsed);
+    state.questionStartedAt = Date.now();
+    return state.questionTimes[q.id];
+  }
+
+  function questionTimeMs(id) {
+    return Math.max(0, Math.round(state.questionTimes[id] || 0));
+  }
+
+  function formatDuration(milliseconds) {
+    const seconds = Math.max(0, Math.round((milliseconds || 0) / 1000));
+    if (seconds < 60) return `${seconds} 秒`;
+    return `${Math.floor(seconds / 60)} 分 ${String(seconds % 60).padStart(2, "0")} 秒`;
+  }
+
   function startQuiz(mode, count, minutes) {
     const beginsExam = mode === "exam" || mode === "past-exam";
     if (beginsExam && state.activeExam) {
@@ -442,21 +578,23 @@
       clearActiveExam();
     }
     state.mode = mode;
-    const pool = mode === "review" ? dueReviewQuestions()
+    const pool = mode === "smart" ? smartDailyQuestions()
+      : mode === "review" ? dueReviewQuestions()
       : mode === "cards" ? bank.filter(q => state.progress.cardIds.includes(q.id))
       : mode === "wrong" ? filteredWrongQuestions()
       : mode === "past" || mode === "past-exam" ? officialPastPool()
       : mode === "custom" ? customPool()
       : currentPool();
     if (!pool.length) {
-      toast(mode === "review" ? "今天沒有到期複習，先練新題吧！" : mode === "cards" ? "你還沒有收藏重點卡片。" : mode === "wrong" ? "錯題已全部掌握，太棒了！" : mode === "past" || mode === "past-exam" ? "此梯次與科目目前沒有已收錄考題。" : "此範圍目前沒有題目。", "success");
+      toast(mode === "review" ? "今天沒有到期複習，先練新題吧！" : mode === "smart" ? "今天的智慧題組暫時無法建立。" : mode === "cards" ? "你還沒有收藏重點卡片。" : mode === "wrong" ? "錯題已全部掌握，太棒了！" : mode === "past" || mode === "past-exam" ? "此梯次與科目目前沒有已收錄考題。" : "此範圍目前沒有題目。", "success");
       return;
     }
 
     const preserveOfficialOrder = mode === "past-exam";
-    const selectedPool = preserveOfficialOrder
+    const selectedPool = preserveOfficialOrder || mode === "smart"
       ? [...pool].sort((a, b) => a.sourceQuestion - b.sourceQuestion)
       : shuffle(pool);
+    if (mode === "smart") selectedPool.sort((a, b) => todayPlan().ids.indexOf(a.id) - todayPlan().ids.indexOf(b.id));
     state.quiz = selectedPool
       .slice(0, Math.min(count || pool.length, pool.length))
       .map(question => prepareQuestion(question, preserveOfficialOrder));
@@ -467,6 +605,9 @@
     state.sessionAnswers = [];
     state.examAnswers = {};
     state.flagged = [];
+    state.questionTimes = {};
+    state.questionStartedAt = null;
+    state.resultFilter = "all";
     state.examMinutes = minutes || EXAM_MINUTES;
     state.examKind = mode === "past-exam" ? "past" : mode === "exam" && state.examMinutes === FULL_EXAM_MINUTES ? "full" : "quick";
     state.examEndsAt = isExamMode() ? Date.now() + state.examMinutes * 60000 : null;
@@ -477,13 +618,18 @@
     window.scrollTo({ top: 0, behavior: "smooth" });
   }
 
-  function recordAttempt(q, selected, confidence, correct, reviewing) {
+  function recordAttempt(q, selected, confidence, correct, reviewing, timeMs = 0) {
     const previous = state.progress.attempts[q.id] || { attempts: 0, correct: 0 };
     state.progress.attempts[q.id] = {
+      ...previous,
       attempts: previous.attempts + 1,
       correct: previous.correct + (correct ? 1 : 0),
       lastCorrect: correct,
       confidence,
+      lastTimeMs: Math.max(0, Math.round(timeMs || 0)),
+      totalTimeMs: Math.max(0, Math.round((previous.totalTimeMs || 0) + (timeMs || 0))),
+      fastestTimeMs: timeMs > 0 ? Math.min(previous.fastestTimeMs || Infinity, Math.round(timeMs)) : (previous.fastestTimeMs || null),
+      slowestTimeMs: Math.max(previous.slowestTimeMs || 0, Math.round(timeMs || 0)),
       updatedAt: new Date().toISOString()
     };
     state.progress.totalAnswered += 1;
@@ -496,18 +642,21 @@
 
     if (!correct || confidence === "低") {
       scheduleReview(q.id, !correct ? "答錯" : "低信心");
-    } else if (reviewing && state.progress.reviewQueue[q.id]) {
+    } else if ((reviewing || state.mode === "smart") && state.progress.reviewQueue[q.id]) {
       advanceReview(q.id);
     }
+    recordDailyPlanAnswer(q.id, correct);
   }
 
   function checkAnswer() {
     if (state.selected === null || state.checked || isExamMode()) return;
     const q = state.quiz[state.index];
+    const timeMs = captureCurrentQuestionTime();
     const correct = state.selected === q.answer;
     state.checked = true;
-    state.sessionAnswers.push({ id: q.id, selected: state.selected, correct, confidence: state.confidence });
-    recordAttempt(q, state.selected, state.confidence, correct, state.mode === "review");
+    state.questionStartedAt = null;
+    state.sessionAnswers.push({ id: q.id, selected: state.selected, correct, confidence: state.confidence, timeMs, flagged: false });
+    recordAttempt(q, state.selected, state.confidence, correct, state.mode === "review", timeMs);
     saveProgress();
     render();
   }
@@ -527,15 +676,18 @@
     state.selected = null;
     state.confidence = "中";
     state.checked = false;
+    state.questionStartedAt = null;
     render();
     document.querySelector("#question-title")?.focus();
   }
 
   function goToQuestion(index) {
     if (index < 0 || index >= state.quiz.length) return;
+    captureCurrentQuestionTime();
     state.index = index;
     state.selected = state.examAnswers[state.quiz[index].id] ?? null;
     state.checked = false;
+    state.questionStartedAt = null;
     if (isExamMode()) saveActiveExam();
     render();
     document.querySelector("#question-title")?.focus();
@@ -548,6 +700,8 @@
   }
 
   function saveSessionHistory(score) {
+    const measured = state.sessionAnswers.filter(answer => answer.timeMs > 0);
+    const sortedTimes = [...measured].sort((a, b) => b.timeMs - a.timeMs);
     const entry = {
       id: `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
       date: new Date().toISOString(),
@@ -559,7 +713,11 @@
       subject2: sessionSubjectScore(2),
       sourceYear: state.mode === "past-exam" ? state.pastSession : null,
       sourceSubject: state.mode === "past-exam" ? Number(state.pastSubject) : null,
-      wrongIds: state.sessionAnswers.filter(answer => !answer.correct).map(answer => answer.id)
+      wrongIds: state.sessionAnswers.filter(answer => !answer.correct && answer.selected !== null).map(answer => answer.id),
+      unansweredIds: state.sessionAnswers.filter(answer => answer.selected === null).map(answer => answer.id),
+      flaggedIds: state.sessionAnswers.filter(answer => answer.flagged).map(answer => answer.id),
+      averageTimeMs: measured.length ? Math.round(measured.reduce((sum, answer) => sum + answer.timeMs, 0) / measured.length) : null,
+      slowQuestionIds: sortedTimes.slice(0, 5).map(answer => answer.id)
     };
     state.progress.history = [entry, ...state.progress.history].slice(0, 30);
   }
@@ -580,12 +738,14 @@
     if (state.screen !== "quiz" || !isExamMode()) return;
     const unanswered = state.quiz.filter(q => state.examAnswers[q.id] === undefined).length;
     if (!force && unanswered && !window.confirm(`還有 ${unanswered} 題未作答，確定要交卷嗎？`)) return;
+    captureCurrentQuestionTime();
     clearTimer();
     state.sessionAnswers = state.quiz.map(q => {
       const selected = state.examAnswers[q.id];
       const correct = selected === q.answer;
-      recordAttempt(q, selected ?? null, "中", correct, false);
-      return { id: q.id, selected: selected ?? null, correct, confidence: "中" };
+      const timeMs = questionTimeMs(q.id);
+      recordAttempt(q, selected ?? null, "中", correct, false, timeMs);
+      return { id: q.id, selected: selected ?? null, correct, confidence: "中", timeMs, flagged: state.flagged.includes(q.id) };
     });
     const score = Math.round(state.sessionAnswers.filter(a => a.correct).length / state.quiz.length * 100);
     state.progress.sessions += 1;
@@ -646,6 +806,9 @@
     state.sessionAnswers = [];
     state.examAnswers = {};
     state.flagged = [];
+    state.questionTimes = {};
+    state.questionStartedAt = null;
+    state.resultFilter = "all";
     state.examEndsAt = null;
     state.screen = "quiz";
     render();
@@ -670,16 +833,20 @@
       const attempt = state.progress.attempts[q.id];
       if (!attempt) return;
       const key = `${q.subject}|${q.topic}`;
-      if (!groups[key]) groups[key] = { subject: q.subject, topic: q.topic, attempts: 0, correct: 0, wrong: 0, due: 0 };
+      if (!groups[key]) groups[key] = { subject: q.subject, topic: q.topic, attempts: 0, correct: 0, wrong: 0, due: 0, totalTimeMs: 0, timedAttempts: 0 };
       groups[key].attempts += attempt.attempts;
       groups[key].correct += attempt.correct;
+      groups[key].totalTimeMs += attempt.totalTimeMs || 0;
+      groups[key].timedAttempts += attempt.totalTimeMs ? attempt.attempts : 0;
       if (wrong.has(q.id)) groups[key].wrong += 1;
       if (state.progress.reviewQueue[q.id]?.nextDue <= dateKey()) groups[key].due += 1;
     });
     return Object.values(groups)
       .map(group => {
         const pct = Math.round(group.correct / group.attempts * 100);
-        return { ...group, pct, priority: Math.round((100 - pct) * Math.log2(group.attempts + 1) + group.wrong * 12 + group.due * 8) };
+        const avgSeconds = group.timedAttempts ? Math.round(group.totalTimeMs / group.timedAttempts / 1000) : 0;
+        const timePenalty = Math.max(0, avgSeconds - 60) * .8;
+        return { ...group, pct, avgSeconds, priority: Math.round((100 - pct) * Math.log2(group.attempts + 1) + group.wrong * 12 + group.due * 8 + timePenalty) };
       })
       .sort((a, b) => b.priority - a.priority || a.pct - b.pct)
       .slice(0, 5);
@@ -692,7 +859,7 @@
       <header class="topbar">
         <button class="brand" data-action="home" aria-label="回到首頁">
           <span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span>
-          <span><strong>iPAS 中級刷題站 <b class="version-badge">v2.0</b></strong><small>科目 1＋科目 2・共 ${bank.length} 題（含 ${officialPastCount} 題歷屆題）</small></span>
+          <span><strong>iPAS 中級刷題站 <b class="version-badge">v2.1</b></strong><small>科目 1＋科目 2・共 ${bank.length} 題（含 ${officialPastCount} 題精修歷屆題）</small></span>
         </button>
         <div class="topbar-actions">
           <button class="utility-button install-button ${isStandalone() ? "is-hidden" : ""}" data-action="install" title="安裝到桌面或手機主畫面" aria-label="安裝 App"><span aria-hidden="true">↓</span><b>安裝 App</b></button>
@@ -717,6 +884,10 @@
     const attempted = Object.keys(state.progress.attempts).length;
     const due = dueReviewQuestions().length;
     const scheduled = scheduledReviewCount();
+    const stages = reviewStageCounts();
+    const plan = todayPlan();
+    const planDone = plan.completedIds.length;
+    const sprint = dailySprintAdvice();
     const weak = weakTopics();
     const cardCount = state.progress.cardIds.length;
     const noteCount = Object.values(state.progress.notes).filter(note => String(note).trim()).length;
@@ -735,7 +906,8 @@
             <button class="subject-chip ${state.subject === "2" ? "active" : ""}" data-subject="2">科目 2</button>
           </div>
           <div class="primary-actions">
-            <button class="button primary" data-start="practice">開始 10 題練習 <span>→</span></button>
+            <button class="button primary smart-start-button" data-start="smart">每日智慧 20 題｜${planDone}/20 <span>→</span></button>
+            <button class="button secondary" data-start="practice">開始 10 題練習</button>
             <button class="button secondary" data-start="exam">20 題模擬考｜30 分鐘</button>
             <button class="button secondary full-exam-button" data-start="full-exam">50 題完整模擬｜60 分鐘</button>
             <button class="button secondary past-exam-button" data-action="past-center">完整歷屆題庫｜${officialPastCount} 題</button>
@@ -751,9 +923,12 @@
           </div>
         </div>
         <aside class="today-card">
-          <div class="card-label">今日複習</div>
+          <div class="card-label">今日複習與進度</div>
           <div class="due-number"><strong>${due}</strong><span>題到期</span></div>
           <p class="review-note">依照第 1、3、7 天節奏安排；目前共有 ${scheduled} 題在複習計畫中。</p>
+          <div class="review-stages" aria-label="間隔複習階段">
+            ${REVIEW_OFFSETS.map((day, index) => `<span class="${stages[index].due ? "has-due" : ""}"><b>第 ${day} 天</b><small>${stages[index].due ? `${stages[index].due} 題到期` : `${stages[index].scheduled} 題排程`}</small></span>`).join("")}
+          </div>
           <button class="button review-button" data-start="review" ${due ? "" : "disabled"}>${due ? "開始今日複習" : "今日複習已完成"} <span>→</span></button>
           <div class="mini-stats compact">
             <div><strong>${accuracy()}%</strong><span>累積正確率</span></div>
@@ -764,6 +939,16 @@
       </section>
 
       ${activeExamView()}
+
+      <section class="workspace sprint-section">
+        <div class="sprint-head"><div><p class="eyebrow">DAILY SPRINT</p><h2>${escapeHtml(sprint.phase)}｜今天這樣讀</h2></div><strong>${daysLeft()}<small>天後考試</small></strong></div>
+        <div class="sprint-grid">
+          <article><span>01</span><div><strong>完成智慧 20 題</strong><p>已完成 ${planDone}/20 題，正確 ${plan.correctIds.length} 題；題組混合到期複習、錯題、低信心與歷屆題。</p></div></article>
+          <article><span>02</span><div><strong>歷屆題進度</strong><p>${escapeHtml(sprint.message)} 尚有 ${sprint.unseenPast} 題未接觸。</p></div></article>
+          <article><span>03</span><div><strong>今天優先補強</strong><p>${sprint.weak ? `科目 ${sprint.weak.subject}「${escapeHtml(sprint.weak.topic)}」目前 ${sprint.weak.pct}%；平均每題 ${sprint.weak.avgSeconds || "－"} 秒。` : "先完成一回智慧題組，系統就會排出弱點順位。"}</p></div></article>
+          <article><span>04</span><div><strong>完整模擬</strong><p>目前完成 ${sprint.fullMocks} 回 50 題模擬；考前至少安排 2 回，再依錯題重練。</p></div></article>
+        </div>
+      </section>
 
       ${pastResourcesView()}
 
@@ -789,7 +974,7 @@
       </section>
 
       <section class="workspace weakness-section">
-        <div class="section-heading"><div><p class="eyebrow">SMART WEAKNESS</p><h2>智慧弱點分析</h2></div><span>依正確率與累積作答結果排序</span></div>
+        <div class="section-heading"><div><p class="eyebrow">SMART WEAKNESS</p><h2>智慧弱點排名</h2></div><span>綜合正確率、錯題、到期複習與每題作答時間</span></div>
         ${weak.length ? `<div class="weakness-card">${weak.map(weakRow).join("")}</div>` : `<div class="empty-analysis"><strong>完成第一回練習後，這裡會分析弱點。</strong><p>系統會依章節正確率，告訴你下一步最該練什麼。</p></div>`}
       </section>
 
@@ -838,7 +1023,7 @@
         <div class="section-heading"><div><p class="eyebrow">MOCK EXAM</p><h2>模擬考趨勢</h2></div><span>70 分為本站練習通過線</span></div>
         <div class="history-card">
           <div class="trend-bars" aria-label="最近模擬考分數趨勢">${[...items].reverse().map((item, index) => `<div class="trend-item"><div class="trend-track"><i class="${historyPassed(item) ? "pass" : ""}" style="height:${Math.max(5, item.score)}%"><b>${item.score}</b></i><span class="pass-line" aria-hidden="true"></span></div><small>第 ${Math.max(1, state.progress.history.filter(row => row.mode === "exam" || row.mode === "past-exam").length - items.length + index + 1)} 回</small></div>`).join("")}</div>
-          <div class="history-list">${items.map(item => `<div class="history-row"><span>${new Date(item.date).toLocaleDateString("zh-TW", { month: "numeric", day: "numeric" })}</span><strong>${item.mode === "past-exam" ? `${escapeHtml(item.sourceYear || "歷屆考題")}・科目 ${item.sourceSubject || "－"}` : item.examKind === "full" ? "完整模擬" : "快速模擬"}・${item.count} 題</strong><span>科 1 ${item.subject1 === null ? "－" : `${item.subject1} 分`}</span><span>科 2 ${item.subject2 === null ? "－" : `${item.subject2} 分`}</span><b class="${historyPassed(item) ? "is-pass" : ""}">${item.score} 分</b></div>`).join("")}</div>
+          <div class="history-list">${items.map(item => `<div class="history-row"><span>${new Date(item.date).toLocaleDateString("zh-TW", { month: "numeric", day: "numeric" })}</span><strong>${item.mode === "past-exam" ? `${escapeHtml(item.sourceYear || "歷屆考題")}・科目 ${item.sourceSubject || "－"}` : item.examKind === "full" ? "完整模擬" : "快速模擬"}・${item.count} 題${item.averageTimeMs ? `・均 ${formatDuration(item.averageTimeMs)}` : ""}</strong><span>科 1 ${item.subject1 === null ? "－" : `${item.subject1} 分`}</span><span>科 2 ${item.subject2 === null ? "－" : `${item.subject2} 分`}</span><b class="${historyPassed(item) ? "is-pass" : ""}">${item.score} 分</b></div>`).join("")}</div>
         </div>
       </section>`;
   }
@@ -891,9 +1076,9 @@
   function weakRow(item) {
     return `<button class="weak-row" data-topic="${escapeHtml(item.topic)}" data-topic-subject="${item.subject}">
       <span class="weak-subject">科目 ${item.subject}</span>
-      <span class="weak-name"><strong>${escapeHtml(item.topic)}</strong><small>${item.attempts} 次作答・${item.wrong} 題待補強</small></span>
+      <span class="weak-name"><strong>${escapeHtml(item.topic)}</strong><small>${item.attempts} 次作答・${item.wrong} 題待補強${item.avgSeconds ? `・平均 ${item.avgSeconds} 秒` : ""}</small></span>
       <span class="weak-bar"><i style="width:${item.pct}%"></i></span>
-      <b>${item.pct}%</b><span class="weak-arrow">→</span>
+      <b>${item.pct}%</b><span class="weak-arrow" title="弱點優先分數 ${item.priority}">→</span>
     </button>`;
   }
 
@@ -906,7 +1091,7 @@
     const isCard = state.progress.cardIds.includes(q.id);
     const card = `
       <article class="question-card">
-        <div class="question-tags"><span class="subject-label">科目 ${q.subject}</span><span>${escapeHtml(q.topic)}</span><span>${escapeHtml(q.difficulty)}</span>${state.mode === "cards" ? '<span class="card-mode-label">重點卡複習</span>' : ""}${q.sourceType === "official-past" ? `<span class="past-mode-label">歷屆｜${escapeHtml(q.sourceYear)}・第 ${q.sourceQuestion} 題</span>` : ""}</div>
+        <div class="question-tags"><span class="subject-label">科目 ${q.subject}</span><span>${escapeHtml(q.topic)}</span><span>${escapeHtml(q.difficulty)}</span>${state.mode === "smart" ? '<span class="smart-mode-label">智慧 20 題</span>' : ""}${state.mode === "cards" ? '<span class="card-mode-label">重點卡複習</span>' : ""}${q.sourceType === "official-past" ? `<span class="past-mode-label">歷屆｜${escapeHtml(q.sourceYear)}・第 ${q.sourceQuestion} 題</span>` : ""}</div>
         ${q.sourceType === "official-past" ? `<a class="question-source" href="${q.sourceUrl}" target="_blank" rel="noopener noreferrer">查看這題的官方公告試題 PDF ↗</a>` : ""}
         ${q.figure ? `<div class="pdf-required-note"><strong>附圖／程式碼已收錄</strong><span>可直接作答，點擊圖片可開啟原尺寸；亦可用上方 PDF 核對。</span></div><figure class="past-figure"><a href="${escapeHtml(q.figure)}" target="_blank" rel="noopener noreferrer"><img src="${escapeHtml(q.figure)}" alt="${escapeHtml(q.sourceYear)}科目 ${q.subject} 第 ${q.sourceQuestion} 題官方原題附圖或程式碼" loading="eager"></a><figcaption>官方原題附圖／程式碼（已避開答案欄）・點圖放大</figcaption></figure>` : q.requiresOfficialPdf ? `<div class="pdf-required-note"><strong>本題含附圖或程式碼</strong><span>請用上方官方 PDF 查看原始附圖。</span></div>` : ""}
         ${q.sourceContext ? `<details class="past-context"><summary>查看共用資料情境</summary><p>${escapeHtml(q.sourceContext)}</p></details>` : ""}
@@ -917,6 +1102,9 @@
           <div class="answer-panel ${isCorrect ? "correct" : "incorrect"}">
             <div class="answer-status"><span>${isCorrect ? "✓" : "!"}</span><strong>${isCorrect ? "答對了" : `答錯了，正確答案是 ${letters[q.answer]}`}</strong></div>
             <p>${escapeHtml(q.explanation)}</p>
+            ${q.keyPoint ? `<div class="key-point"><strong>一句抓重點</strong><span>${escapeHtml(q.keyPoint)}</span></div>` : ""}
+            ${Array.isArray(q.reasoningSteps) && q.reasoningSteps.length ? `<ol class="reasoning-steps">${q.reasoningSteps.map(step => `<li>${escapeHtml(step)}</li>`).join("")}</ol>` : ""}
+            <div class="answer-time">本題作答時間：<strong>${formatDuration(questionTimeMs(q.id))}</strong></div>
             ${state.confidence === "低" ? `<small>你選了「低信心」，本題仍會加入延遲複習。</small>` : ""}
             <div class="memory-cues"><div><strong>⚠ 常見陷阱</strong><p>${escapeHtml(questionTrap(q))}</p></div><div><strong>記憶口訣</strong><p>${escapeHtml(questionMnemonic(q))}</p></div></div>
             <div class="option-breakdown">
@@ -976,29 +1164,52 @@
     return `<button class="option ${status}" role="radio" aria-checked="${selected === index}" data-option="${index}" ${!isExamMode() && state.checked ? "disabled" : ""}><span class="option-letter">${letters[index]}</span><span>${escapeHtml(option)}</span><i aria-hidden="true">${!isExamMode() && state.checked && index === q.answer ? "✓" : !isExamMode() && state.checked && state.selected === index ? "×" : ""}</i></button>`;
   }
 
+  function resultCounts() {
+    return {
+      all: state.sessionAnswers.length,
+      wrong: state.sessionAnswers.filter(answer => answer.selected !== null && !answer.correct).length,
+      unanswered: state.sessionAnswers.filter(answer => answer.selected === null).length,
+      flagged: state.sessionAnswers.filter(answer => answer.flagged).length
+    };
+  }
+
+  function filteredResultRows() {
+    return state.quiz.map((q, index) => ({ q, index, answer: state.sessionAnswers[index] })).filter(row => {
+      if (state.resultFilter === "wrong") return row.answer?.selected !== null && !row.answer?.correct;
+      if (state.resultFilter === "unanswered") return row.answer?.selected === null;
+      if (state.resultFilter === "flagged") return row.answer?.flagged;
+      return true;
+    });
+  }
+
   function resultReviewRow(q, index) {
     const answer = state.sessionAnswers[index];
     const isCard = state.progress.cardIds.includes(q.id);
-    return `<div class="review-row ${answer?.correct ? "ok" : "bad"}">
-      <span>${answer?.correct ? "✓" : "×"}</span>
+    const unanswered = answer?.selected === null;
+    return `<div class="review-row ${answer?.correct ? "ok" : unanswered ? "unanswered" : "bad"}">
+      <span>${answer?.correct ? "✓" : unanswered ? "－" : "×"}</span>
       <div class="review-content">
         <strong>${escapeHtml(q.question)}</strong>
-        <small>${subjectName(q.subject)}${q.sourceType === "official-past" ? `・${escapeHtml(q.sourceYear)}第 ${q.sourceQuestion} 題` : ""}${!isExamMode() ? `・信心 ${answer?.confidence || "－"}` : ""}</small>
+        <small>${subjectName(q.subject)}${q.sourceType === "official-past" ? `・${escapeHtml(q.sourceYear)}第 ${q.sourceQuestion} 題` : ""}${!isExamMode() ? `・信心 ${answer?.confidence || "－"}` : ""}・作答 ${formatDuration(answer?.timeMs || 0)}${answer?.flagged ? "・★ 已標記" : ""}</small>
         ${!answer?.correct ? `<em>${escapeHtml(q.explanation)}</em>` : ""}
         <details class="result-explanations">
-          <summary>查看四個選項解析</summary>
-          <div><div class="result-memory-cues"><p><strong>常見陷阱：</strong>${escapeHtml(questionTrap(q))}</p><p><strong>記憶口訣：</strong>${escapeHtml(questionMnemonic(q))}</p></div>${q.options.map((option, optionIndex) => `<div class="result-option-reason ${optionIndex === q.answer ? "is-correct" : optionIndex === answer?.selected ? "is-chosen-wrong" : ""}"><span>${letters[optionIndex]}</span><p><strong>${escapeHtml(option)}</strong><br>${escapeHtml(optionExplanation(q, optionIndex))}</p></div>`).join("")}</div>
+          <summary>查看精修解法與四個選項</summary>
+          <div>${q.keyPoint ? `<div class="key-point"><strong>一句抓重點</strong><span>${escapeHtml(q.keyPoint)}</span></div>` : ""}${Array.isArray(q.reasoningSteps) ? `<ol class="reasoning-steps compact">${q.reasoningSteps.map(step => `<li>${escapeHtml(step)}</li>`).join("")}</ol>` : ""}<div class="result-memory-cues"><p><strong>常見陷阱：</strong>${escapeHtml(questionTrap(q))}</p><p><strong>記憶口訣：</strong>${escapeHtml(questionMnemonic(q))}</p></div>${q.options.map((option, optionIndex) => `<div class="result-option-reason ${optionIndex === q.answer ? "is-correct" : optionIndex === answer?.selected ? "is-chosen-wrong" : ""}"><span>${letters[optionIndex]}</span><p><strong>${escapeHtml(option)}</strong><br>${escapeHtml(optionExplanation(q, optionIndex))}</p></div>`).join("")}</div>
         </details>
       </div>
-      <div class="review-side"><b>${answer?.correct ? "答對" : `正解 ${letters[q.answer]}`}</b><button class="mini-card-button ${isCard ? "active" : ""}" data-card-id="${q.id}" aria-pressed="${isCard}">${isCard ? "★ 重點卡" : "☆ 收藏"}</button></div>
+      <div class="review-side"><b>${answer?.correct ? "答對" : unanswered ? `未答・正解 ${letters[q.answer]}` : `正解 ${letters[q.answer]}`}</b><button class="mini-card-button ${isCard ? "active" : ""}" data-card-id="${q.id}" aria-pressed="${isCard}">${isCard ? "★ 重點卡" : "☆ 收藏"}</button></div>
     </div>`;
   }
 
   function resultView() {
     const correct = state.sessionAnswers.filter(a => a.correct).length;
-    const wrongIds = state.sessionAnswers.filter(answer => !answer.correct).map(answer => answer.id);
+    const retryIds = state.sessionAnswers.filter(answer => !answer.correct).map(answer => answer.id);
     const score = Math.round(correct / state.quiz.length * 100);
     const lowConfidenceCorrect = state.sessionAnswers.filter(a => a.correct && a.confidence === "低").length;
+    const counts = resultCounts();
+    const reviewRows = filteredResultRows();
+    const measured = state.sessionAnswers.filter(answer => answer.timeMs > 0);
+    const averageTimeMs = measured.length ? Math.round(measured.reduce((sum, answer) => sum + answer.timeMs, 0) / measured.length) : 0;
     const message = score >= 85 ? "掌握得很穩，繼續保持。" : score >= 70 ? "已接近目標，把錯題補起來。" : "先別急，解析與延遲複習就是進步的起點。";
     const subject1Score = sessionSubjectScore(1);
     const subject2Score = sessionSubjectScore(2);
@@ -1007,9 +1218,11 @@
     const examStatus = isExamMode() ? `<div class="pass-status ${passed ? "pass" : "needs-work"}"><strong>${passed ? (subject1Score !== null && subject2Score !== null ? "兩科皆達 70 分" : "本站練習通過") : "再補強後重試"}</strong><span>本站以 70 分作為模擬練習線；官方數據分析證書須科目 1、科目 2 各達 70 分。</span></div><div class="subject-score-pills">${subjectScorePills}</div>` : "";
     return appShell(`
       <section class="result-shell workspace">
-        <div class="result-hero"><p class="eyebrow">SESSION COMPLETE</p><div class="result-score"><strong>${score}</strong><span>分</span></div><h1>${escapeHtml(message)}</h1><p>答對 ${correct} 題，共 ${state.quiz.length} 題；${lowConfidenceCorrect ? `另有 ${lowConfidenceCorrect} 題雖答對但信心偏低，已安排複習。` : "本次作答已存入學習紀錄。"}</p>${examStatus}<div class="primary-actions centered">${wrongIds.length ? `<button class="button primary" data-action="retry-current-wrong">重練本次錯題｜${wrongIds.length} 題</button>` : ""}<button class="button secondary" data-action="retry">再練一次 <span>→</span></button><button class="button secondary" data-action="home">回學習地圖</button></div></div>
+        <div class="result-hero"><p class="eyebrow">SESSION COMPLETE</p><div class="result-score"><strong>${score}</strong><span>分</span></div><h1>${escapeHtml(message)}</h1><p>答對 ${correct} 題，共 ${state.quiz.length} 題；${lowConfidenceCorrect ? `另有 ${lowConfidenceCorrect} 題雖答對但信心偏低，已安排複習。` : "本次作答已存入學習紀錄。"}</p>${examStatus}<div class="primary-actions centered">${retryIds.length ? `<button class="button primary" data-action="retry-current-wrong">重練錯題與未答｜${retryIds.length} 題</button>` : ""}<button class="button secondary" data-action="retry">再練一次 <span>→</span></button><button class="button secondary" data-action="home">回學習地圖</button></div></div>
+        <div class="result-insights"><span><b>${formatDuration(averageTimeMs)}</b>平均每題</span><span><b>${counts.wrong}</b>題答錯</span><span><b>${counts.unanswered}</b>題未答</span><span><b>${counts.flagged}</b>題已標記</span></div>
         <div class="review-list"><div class="section-heading"><div><p class="eyebrow">REVIEW</p><h2>本次作答</h2></div><span>${correct}/${state.quiz.length} 正確</span></div>
-          ${state.quiz.map(resultReviewRow).join("")}
+          <div class="result-filters" aria-label="篩選考後題目">${[["all", "全部"], ["wrong", "錯題"], ["unanswered", "未答"], ["flagged", "標記題"]].map(([key, label]) => `<button class="${state.resultFilter === key ? "active" : ""}" data-result-filter="${key}">${label} <b>${counts[key]}</b></button>`).join("")}</div>
+          ${reviewRows.length ? reviewRows.map(row => resultReviewRow(row.q, row.index)).join("") : `<div class="empty-analysis"><strong>這個篩選目前沒有題目。</strong><p>可切換到其他分類查看完整解析。</p></div>`}
         </div>
       </section>
     `);
@@ -1019,6 +1232,7 @@
     const app = document.querySelector("#app");
     app.innerHTML = state.screen === "quiz" ? quizView() : state.screen === "result" ? resultView() : state.screen === "wrong" ? wrongCenterView() : homeView();
     bindEvents();
+    beginQuestionTiming();
   }
 
   function selectOption(index) {
@@ -1061,7 +1275,7 @@
   }
 
   function exportProgress() {
-    const payload = { app: "ipas-ai-quiz", version: 10, exportedAt: new Date().toISOString(), progress: state.progress, activeExam: state.activeExam, settings };
+    const payload = { app: "ipas-ai-quiz", version: 21, exportedAt: new Date().toISOString(), progress: state.progress, activeExam: state.activeExam, settings };
     const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
     const url = URL.createObjectURL(blob);
     const anchor = document.createElement("a");
@@ -1102,7 +1316,7 @@
       const mode = button.dataset.start;
       state.topic = null;
       if (mode === "full-exam") startQuiz("exam", 50, FULL_EXAM_MINUTES);
-      else startQuiz(mode, mode === "exam" ? 20 : mode === "review" || mode === "cards" ? 200 : 10, mode === "exam" ? EXAM_MINUTES : undefined);
+      else startQuiz(mode, mode === "smart" ? SMART_DAILY_COUNT : mode === "exam" ? 20 : mode === "review" || mode === "cards" ? 200 : 10, mode === "exam" ? EXAM_MINUTES : undefined);
     }));
     document.querySelectorAll("[data-quick-subject]").forEach(button => button.addEventListener("click", () => { state.subject = button.dataset.quickSubject; state.topic = null; startQuiz("practice", 10); }));
     document.querySelectorAll("[data-topic]").forEach(button => button.addEventListener("click", () => { state.subject = button.dataset.topicSubject; state.topic = button.dataset.topic; startQuiz("practice", 10); }));
@@ -1138,6 +1352,7 @@
       if (action === "install") installApp();
     }));
     document.querySelectorAll("[data-card-id]").forEach(button => button.addEventListener("click", () => toggleCard(button.dataset.cardId)));
+    document.querySelectorAll("[data-result-filter]").forEach(button => button.addEventListener("click", () => { state.resultFilter = button.dataset.resultFilter; render(); }));
     document.querySelectorAll("[data-master-id]").forEach(button => button.addEventListener("click", () => markWrongMastered(button.dataset.masterId)));
     document.querySelectorAll("[data-note-id]").forEach(area => area.addEventListener("input", () => saveNote(area.dataset.noteId, area.value)));
     document.querySelector("#progress-file")?.addEventListener("change", event => importProgress(event.target.files?.[0]));
@@ -1190,12 +1405,12 @@
     register({
       name: "read_study_progress", title: "讀取刷題進度", description: "讀取作答、正確率、到期複習、歷屆題數與各科題庫進度，不修改資料。",
       inputSchema: { type: "object", properties: {}, additionalProperties: false }, annotations: { readOnlyHint: true, untrustedContentHint: false },
-      execute() { return { totalAnswered: state.progress.totalAnswered, accuracyPercent: accuracy(), dueReviewCount: dueReviewQuestions().length, scheduledReviewCount: scheduledReviewCount(), wrongCount: state.progress.wrongIds.length, cardCount: state.progress.cardIds.length, noteCount: Object.keys(state.progress.notes).length, officialPastCount, examHistoryCount: state.progress.history.filter(item => item.mode === "exam" || item.mode === "past-exam").length, unfinishedExam: state.activeExam ? { label: activeExamLabel(), answered: Object.keys(state.activeExam.examAnswers || {}).length, count: state.activeExam.quiz.length } : null, subject1: subjectStats(1), subject2: subjectStats(2), examDaysLeft: daysLeft() }; }
+      execute() { const plan = todayPlan(); return { totalAnswered: state.progress.totalAnswered, accuracyPercent: accuracy(), dueReviewCount: dueReviewQuestions().length, scheduledReviewCount: scheduledReviewCount(), reviewStages: reviewStageCounts(), todaySmartPlan: { completed: plan.completedIds.length, correct: plan.correctIds.length, total: plan.ids.length }, wrongCount: state.progress.wrongIds.length, cardCount: state.progress.cardIds.length, noteCount: Object.keys(state.progress.notes).length, officialPastCount, examHistoryCount: state.progress.history.filter(item => item.mode === "exam" || item.mode === "past-exam").length, unfinishedExam: state.activeExam ? { label: activeExamLabel(), answered: Object.keys(state.activeExam.examAnswers || {}).length, count: state.activeExam.quiz.length } : null, subject1: subjectStats(1), subject2: subjectStats(2), weakTopics: weakTopics(), examDaysLeft: daysLeft(), dailySprintAdvice: dailySprintAdvice() }; }
     });
     register({
       name: "start_quiz_session", title: "開始刷題", description: "在畫面上開始科目 1、科目 2、兩科混合、歷屆題、錯題或重點卡片的練習、複習或模擬考。",
-      inputSchema: { type: "object", properties: { subject: { type: "string", enum: ["all", "1", "2"] }, mode: { type: "string", enum: ["practice", "exam", "review", "cards", "wrong", "past", "past-exam"] }, count: { type: "integer", minimum: 1, maximum: 400 } }, required: ["subject", "mode", "count"], additionalProperties: false }, annotations: { readOnlyHint: false, untrustedContentHint: false },
-      execute(input) { if (!input || !["all", "1", "2"].includes(input.subject) || !["practice", "exam", "review", "cards", "wrong", "past", "past-exam"].includes(input.mode) || !Number.isInteger(input.count) || input.count < 1 || input.count > bank.length) throw new Error("刷題設定無效。"); state.subject = input.subject; state.wrongSubject = input.subject; state.pastSubject = input.subject; state.topic = null; state.wrongTopic = "all"; state.pastSession = "all"; startQuiz(input.mode, input.count); return { started: state.screen === "quiz", subject: input.subject, mode: input.mode, questionCount: state.quiz.length }; }
+      inputSchema: { type: "object", properties: { subject: { type: "string", enum: ["all", "1", "2"] }, mode: { type: "string", enum: ["smart", "practice", "exam", "review", "cards", "wrong", "past", "past-exam"] }, count: { type: "integer", minimum: 1, maximum: 400 } }, required: ["subject", "mode", "count"], additionalProperties: false }, annotations: { readOnlyHint: false, untrustedContentHint: false },
+      execute(input) { if (!input || !["all", "1", "2"].includes(input.subject) || !["smart", "practice", "exam", "review", "cards", "wrong", "past", "past-exam"].includes(input.mode) || !Number.isInteger(input.count) || input.count < 1 || input.count > bank.length) throw new Error("刷題設定無效。"); state.subject = input.subject; state.wrongSubject = input.subject; state.pastSubject = input.subject; state.topic = null; state.wrongTopic = "all"; state.pastSession = "all"; startQuiz(input.mode, input.mode === "smart" ? SMART_DAILY_COUNT : input.count); return { started: state.screen === "quiz", subject: input.subject, mode: input.mode, questionCount: state.quiz.length }; }
     });
   }
 
