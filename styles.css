@@ -149,12 +149,18 @@ button:focus-visible, a:focus-visible, select:focus-visible, textarea:focus-visi
 .past-card > div { display: grid; gap: 8px; margin-top: auto; padding-top: 18px; }
 .past-card button { min-height: 41px; border: 0; border-radius: 10px; background: var(--teal); color: white; font-weight: 800; cursor: pointer; }
 .past-card button:hover { background: var(--teal-dark); }
+.past-card .past-practice-button { border: 1px solid var(--line); background: var(--paper); color: var(--teal-dark); }
+.past-card .past-practice-button:hover { border-color: var(--teal); background: var(--teal-pale); }
 .past-card a { color: var(--teal-dark); font-size: .76rem; font-weight: 700; text-align: center; text-underline-offset: 3px; }
 .source-note { margin: 13px 2px 0; color: var(--muted); font-size: .76rem; }
 .question-tags .past-mode-label { color: #674a00; background: #fff0b8; border-color: transparent; font-weight: 800; }
 .question-source { display: inline-block; margin: -10px 0 17px; color: var(--teal-dark); font-size: .78rem; font-weight: 800; text-underline-offset: 4px; }
 .pdf-required-note { display: flex; align-items: center; gap: 10px; margin: -5px 0 16px; padding: 10px 13px; border: 1px solid #e8c55a; border-radius: 11px; background: #fff7d7; color: #604700; font-size: .78rem; }
 .pdf-required-note strong { white-space: nowrap; }
+.past-figure { margin: 0 0 22px; padding: 12px; border: 1px solid var(--line); border-radius: 14px; background: var(--paper); }
+.past-figure a { display: block; cursor: zoom-in; }
+.past-figure img { display: block; width: 100%; max-height: 720px; object-fit: contain; border-radius: 8px; background: #fff; }
+.past-figure figcaption { margin-top: 8px; color: var(--muted); font-size: .73rem; text-align: center; }
 .past-context { margin: 0 0 20px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface); }
 .past-context summary { padding: 11px 14px; color: var(--teal-dark); font-size: .84rem; font-weight: 800; cursor: pointer; }
 .past-context p { margin: 0; padding: 0 14px 14px; color: var(--muted); font-size: .86rem; line-height: 1.75; overflow-wrap: anywhere; }
@@ -180,6 +186,7 @@ button:focus-visible, a:focus-visible, select:focus-visible, textarea:focus-visi
 .history-list { display: grid; align-content: start; }
 .history-row { display: grid; grid-template-columns: 58px 1.3fr .8fr .8fr 58px; gap: 10px; align-items: center; padding: 13px 4px; border-bottom: 1px solid var(--line); font-size: .82rem; }
 .history-row:last-child { border-bottom: 0; }
+.history-row > strong { overflow-wrap: anywhere; }
 .history-row > span { color: var(--muted); }
 .history-row > b { color: var(--orange); text-align: right; }
 .history-row > b.is-pass { color: var(--teal-dark); }
@@ -397,8 +404,10 @@ html[data-theme="dark"] .option-reason { background: rgba(7, 21, 19, .55); }
 html[data-theme="dark"] .past-summary { background: #102b28; border: 1px solid #31504c; }
 html[data-theme="dark"] .past-summary p, html[data-theme="dark"] .past-summary span { color: #c7d9d6; }
 html[data-theme="dark"] .past-card { background: var(--surface); }
+html[data-theme="dark"] .past-card .past-practice-button { background: var(--paper); color: var(--teal-dark); }
 html[data-theme="dark"] .question-tags .past-mode-label { background: #4d472f; color: #f7e9ae; }
 html[data-theme="dark"] .pdf-required-note { background: #3d351d; border-color: #74652c; color: #f4e5aa; }
+html[data-theme="dark"] .past-figure { background: #0a1d1a; border-color: #31504c; }
 html[data-theme="dark"] .past-context { background: var(--surface); }
 html[data-theme="dark"] .card-toggle:hover,
 html[data-theme="dark"] .card-toggle.active,
