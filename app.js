@@ -197,11 +197,25 @@
   function migrateActiveExam(input) {
     if (!input || !["exam", "past-exam"].includes(input.mode) || !Array.isArray(input.quiz) || !input.quiz.length) return null;
     const validIds = new Set(bank.map(q => q.id));
-    const quiz = input.quiz.filter(q => q && validIds.has(q.id) && Array.isArray(q.options) && q.options.length === 4);
-    if (quiz.length !== input.quiz.length) return null;
+    const savedQuiz = input.quiz.filter(q => q && validIds.has(q.id) && Array.isArray(q.options) && q.options.length === 4);
+    if (savedQuiz.length !== input.quiz.length) return null;
+    const canonicalById = new Map(bank.map(q => [q.id, q]));
+    const savedById = new Map(savedQuiz.map(q => [q.id, q]));
+    const quiz = savedQuiz.map(question => {
+      const canonical = canonicalById.get(question.id);
+      return canonical?.sourceType === "official-past" ? prepareQuestion(canonical, true) : question;
+    });
     const examAnswers = {};
     Object.entries(input.examAnswers || {}).forEach(([id, value]) => {
-      if (validIds.has(id) && Number.isInteger(value) && value >= 0 && value <= 3) examAnswers[id] = value;
+      if (!validIds.has(id) || !Number.isInteger(value) || value < 0 || value > 3) return;
+      const canonical = canonicalById.get(id);
+      const saved = savedById.get(id);
+      if (canonical?.sourceType === "official-past") {
+        const canonicalIndex = canonical.options.indexOf(saved.options[value]);
+        if (canonicalIndex >= 0) examAnswers[id] = canonicalIndex;
+        return;
+      }
+      examAnswers[id] = value;
     });
     return {
       version: 3,
@@ -378,6 +392,10 @@
       optionExplanations: options.map(item => item.explanation),
       answer: options.findIndex(item => item.originalIndex === question.answer)
     };
+  }
+
+  function preserveOfficialOptionOrder(question) {
+    return question.sourceType === "official-past";
   }
 
   function optionExplanation(q, index) {
@@ -749,14 +767,14 @@
       return;
     }
 
-    const preserveOfficialOrder = mode === "past-exam";
-    const selectedPool = preserveOfficialOrder || mode === "smart"
+    const preservePaperOrder = mode === "past-exam";
+    const selectedPool = preservePaperOrder || mode === "smart"
       ? [...pool].sort((a, b) => a.sourceQuestion - b.sourceQuestion)
       : shuffle(pool);
     if (mode === "smart") selectedPool.sort((a, b) => todayPlan().ids.indexOf(a.id) - todayPlan().ids.indexOf(b.id));
     state.quiz = selectedPool
       .slice(0, Math.min(count || pool.length, pool.length))
-      .map(question => prepareQuestion(question, preserveOfficialOrder));
+      .map(question => prepareQuestion(question, preserveOfficialOptionOrder(question)));
     state.index = 0;
     state.selected = null;
     state.confidence = "中";
@@ -957,7 +975,7 @@
       return;
     }
     state.mode = "mistake-review";
-    state.quiz = shuffle(pool).map(question => prepareQuestion(question));
+    state.quiz = shuffle(pool).map(question => prepareQuestion(question, preserveOfficialOptionOrder(question)));
     state.index = 0;
     state.selected = null;
     state.confidence = "中";
@@ -1018,7 +1036,7 @@
       <header class="topbar">
         <button class="brand" data-action="home" aria-label="回到首頁">
           <span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span>
-          <span><strong>iPAS 中級刷題站 <b class="version-badge">v2.2</b></strong><small>科目 1＋科目 2・共 ${bank.length} 題（含 ${officialPastCount} 題精修歷屆題）</small></span>
+          <span><strong>iPAS 中級刷題站 <b class="version-badge">v2.2.1</b></strong><small>科目 1＋科目 2・共 ${bank.length} 題（含 ${officialPastCount} 題精修歷屆題）</small></span>
         </button>
         <div class="topbar-actions">
           <button class="utility-button install-button ${isStandalone() ? "is-hidden" : ""}" data-action="install" title="安裝到桌面或手機主畫面" aria-label="安裝 App"><span aria-hidden="true">↓</span><b>安裝 App</b></button>
@@ -1260,7 +1278,7 @@
     const card = `
       <article class="question-card">
         <div class="question-tags"><span class="subject-label">科目 ${q.subject}</span><span>${escapeHtml(q.topic)}</span><span>${escapeHtml(q.difficulty)}</span>${state.mode === "smart" ? '<span class="smart-mode-label">智慧 20 題</span>' : ""}${state.mode === "cards" ? '<span class="card-mode-label">重點卡複習</span>' : ""}${q.sourceType === "official-past" ? `<span class="past-mode-label">歷屆｜${escapeHtml(q.sourceYear)}・第 ${q.sourceQuestion} 題</span>` : ""}</div>
-        ${q.sourceType === "official-past" ? `<a class="question-source" href="${q.sourceUrl}" target="_blank" rel="noopener noreferrer">查看這題的官方公告試題 PDF ↗</a>` : ""}
+        ${q.sourceType === "official-past" ? `<div class="question-source-row"><a class="question-source" href="${q.sourceUrl}" target="_blank" rel="noopener noreferrer">查看這題的官方公告試題 PDF ↗</a><span>官方 A～D 順序已保留</span></div>` : ""}
         ${q.figure ? `<div class="pdf-required-note"><strong>附圖／程式碼已收錄</strong><span>可直接作答，點擊圖片可開啟原尺寸；亦可用上方 PDF 核對。</span></div><figure class="past-figure"><a href="${escapeHtml(q.figure)}" target="_blank" rel="noopener noreferrer"><img src="${escapeHtml(q.figure)}" alt="${escapeHtml(q.sourceYear)}科目 ${q.subject} 第 ${q.sourceQuestion} 題官方原題附圖或程式碼" loading="eager"></a><figcaption>官方原題附圖／程式碼（已避開答案欄）・點圖放大</figcaption></figure>` : q.requiresOfficialPdf ? `<div class="pdf-required-note"><strong>本題含附圖或程式碼</strong><span>請用上方官方 PDF 查看原始附圖。</span></div>` : ""}
         ${q.sourceContext ? `<details class="past-context"><summary>查看共用資料情境</summary><p>${escapeHtml(q.sourceContext)}</p></details>` : ""}
         <h1 id="question-title" tabindex="-1">${escapeHtml(q.question)}</h1>
@@ -1467,7 +1485,7 @@
   }
 
   function exportProgress() {
-    const payload = { app: "ipas-ai-quiz", version: 22, exportedAt: new Date().toISOString(), progress: state.progress, activeExam: state.activeExam, settings };
+    const payload = { app: "ipas-ai-quiz", version: 221, exportedAt: new Date().toISOString(), progress: state.progress, activeExam: state.activeExam, settings };
     const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
     const url = URL.createObjectURL(blob);
     const anchor = document.createElement("a");

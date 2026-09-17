@@ -186,7 +186,9 @@ button:focus-visible, a:focus-visible, select:focus-visible, textarea:focus-visi
 .source-note { margin: 13px 2px 0; color: var(--muted); font-size: .76rem; }
 .question-tags .past-mode-label { color: #674a00; background: #fff0b8; border-color: transparent; font-weight: 800; }
 .question-tags .smart-mode-label { color: #07574f; background: #c9f3eb; border-color: transparent; font-weight: 800; }
-.question-source { display: inline-block; margin: -10px 0 17px; color: var(--teal-dark); font-size: .78rem; font-weight: 800; text-underline-offset: 4px; }
+.question-source-row { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 12px; margin: -10px 0 17px; }
+.question-source { color: var(--teal-dark); font-size: .78rem; font-weight: 800; text-underline-offset: 4px; }
+.question-source-row span { color: var(--muted); font-size: .76rem; }
 .pdf-required-note { display: flex; align-items: center; gap: 10px; margin: -5px 0 16px; padding: 10px 13px; border: 1px solid #e8c55a; border-radius: 11px; background: #fff7d7; color: #604700; font-size: .78rem; }
 .pdf-required-note strong { white-space: nowrap; }
 .past-figure { margin: 0 0 22px; padding: 12px; border: 1px solid var(--line); border-radius: 14px; background: var(--paper); }
