@@ -11,6 +11,7 @@
   const FULL_EXAM_MINUTES = 90;
   const PASS_SCORE = 70;
   const STABLE_SCORE = 80;
+  const QUALITY_REVIEW_DATE = "2026-09-17";
   const letters = ["A", "B", "C", "D"];
   const MISTAKE_REASONS = [
     ["concept", "觀念不熟"],
@@ -29,6 +30,7 @@
     { year: "115 年第一次", subject: 1, label: "115-1｜科目 1" },
     { year: "115 年第一次", subject: 2, label: "115-1｜科目 2" }
   ];
+  const qualityReport = validateQuestionBank();
   let timerHandle = null;
   let installPrompt = null;
 
@@ -85,6 +87,67 @@
     [/Moving Average（移動平均）/i, "Moving Average（移動平均）用鄰近時段平均來平滑短期波動，但可能產生時間落後"],
     [/Visualization|視覺化|長條圖|折線圖|散佈圖|圓餅圖/i, "資料視覺化要依變數型態與比較目的選圖，圖表本身不能取代統計或因果證據"]
   ];
+
+  function validateQuestionBank() {
+    const issues = [];
+    const issueIds = new Set();
+    const seenIds = new Set();
+    const addIssue = (question, code, message) => {
+      issues.push({ id: question?.id || "unknown", code, message });
+      if (question?.id) issueIds.add(question.id);
+    };
+
+    bank.forEach(question => {
+      if (!question?.id || seenIds.has(question.id)) addIssue(question, "duplicate-id", "題目識別碼缺漏或重複");
+      if (question?.id) seenIds.add(question.id);
+      if (![1, 2].includes(question?.subject)) addIssue(question, "subject", "科目必須是 1 或 2");
+      if (!String(question?.question || "").trim()) addIssue(question, "question", "題幹不可空白");
+      if (!Array.isArray(question?.options) || question.options.length !== 4) addIssue(question, "options", "選項必須正好四個");
+      else {
+        const normalized = question.options.map(option => String(option).trim());
+        if (normalized.some(option => !option)) addIssue(question, "blank-option", "選項不可空白");
+        if (new Set(normalized).size !== 4) addIssue(question, "duplicate-option", "選項內容不可重複");
+      }
+      if (!Number.isInteger(question?.answer) || question.answer < 0 || question.answer > 3) addIssue(question, "answer", "答案索引必須落在 A～D");
+      if (!String(question?.explanation || "").trim()) addIssue(question, "explanation", "白話解析不可空白");
+      if (question?.sourceType === "official-past" && (!Array.isArray(question?.optionExplanations) || question.optionExplanations.length !== 4 || question.optionExplanations.some(text => !String(text || "").trim()))) {
+        addIssue(question, "option-explanations", "四個選項都必須有解析");
+      }
+      if (question?.sourceType === "official-past") {
+        if (!question.sourceYear || !Number.isInteger(question.sourceQuestion) || !question.sourceUrl) addIssue(question, "official-source", "歷屆題的梯次、題號或官方來源缺漏");
+        if (!question.analysisQuality || !question.lastReviewed) addIssue(question, "review-state", "歷屆題缺少本站解析整理紀錄");
+      }
+    });
+
+    const paperChecks = PAST_PAPERS.map(paper => {
+      const questions = bank
+        .filter(question => question.sourceType === "official-past" && question.sourceYear === paper.year && question.subject === paper.subject)
+        .sort((a, b) => a.sourceQuestion - b.sourceQuestion);
+      const sequenceOk = questions.length === 50 && questions.every((question, index) => question.sourceQuestion === index + 1);
+      if (!sequenceOk) {
+        issues.push({ id: paper.label, code: "paper-sequence", message: `${paper.label} 題數或題號順序不完整` });
+        questions.forEach(question => addIssue(question, "paper-sequence", `${paper.label} 題數或題號順序不完整`));
+      }
+      return { ...paper, count: questions.length, sequenceOk };
+    });
+
+    const officialQuestions = bank.filter(question => question.sourceType === "official-past");
+    return {
+      checkedAt: QUALITY_REVIEW_DATE,
+      total: bank.length,
+      officialTotal: officialQuestions.length,
+      structuralPassed: bank.length - issueIds.size,
+      organizedAnalyses: officialQuestions.filter(question => question.analysisQuality && question.lastReviewed).length,
+      figureCount: officialQuestions.filter(question => question.figure).length,
+      paperChecks,
+      issues,
+      issueIds
+    };
+  }
+
+  function questionQuality(question) {
+    return qualityReport.issueIds.has(question.id) ? "待修正" : "結構檢查通過";
+  }
 
   function readSettings() {
     try {
@@ -569,7 +632,10 @@
     timerHandle = window.setInterval(() => {
       const remaining = Math.max(0, state.examEndsAt - Date.now());
       const timer = document.querySelector("#exam-timer");
-      if (timer) timer.textContent = formatTime(remaining);
+      if (timer) {
+        timer.textContent = formatTime(remaining);
+        timer.className = `exam-timer ${examTimeLevel(remaining)}`;
+      }
       const pace = examPaceStatus();
       const paceNode = document.querySelector("#pace-status");
       if (paceNode) {
@@ -578,6 +644,21 @@
       }
       if (remaining <= 0) submitExam(true);
     }, 1000);
+  }
+
+  function examTimeLevel(remaining = Math.max(0, state.examEndsAt - Date.now())) {
+    if (remaining <= 5 * 60000) return "urgent";
+    if (remaining <= 15 * 60000) return "warning";
+    return "normal";
+  }
+
+  async function toggleFullscreen() {
+    try {
+      if (document.fullscreenElement) await document.exitFullscreen?.();
+      else await document.documentElement.requestFullscreen?.();
+    } catch (_) {
+      toast("此瀏覽器目前無法切換全螢幕，可改用瀏覽器的全螢幕功能。", "error");
+    }
   }
 
   function examPaceStatus() {
@@ -660,7 +741,9 @@
     const source = q.sourceType === "official-past"
       ? `${escapeHtml(q.sourceYear)}・科目 ${q.subject}・第 ${q.sourceQuestion} 題`
       : "本站原創練習題";
-    return `<div class="source-trace"><span><strong>題目來源</strong>${source}</span><span><strong>對應範圍</strong>科目 ${q.subject}「${escapeHtml(q.topic)}」</span><span><strong>解析狀態</strong>${q.analysisQuality === "v2.1-reviewed" ? "歷屆題精修完成" : "本站白話解析"}</span><button data-report-id="${q.id}">複製問題回報文字</button></div>`;
+    const answerBasis = q.sourceType === "official-past" ? "依官方公告答案" : "本站題庫設定";
+    const analysisStatus = q.analysisQuality === "v2.1-reviewed" ? "本站已整理（非官方）" : "本站白話解析（非官方）";
+    return `<div class="source-trace"><span><strong>題目來源</strong>${source}</span><span><strong>答案依據</strong>${answerBasis}</span><span><strong>資料檢查</strong>${questionQuality(q)}</span><span><strong>解析說明</strong>${analysisStatus}</span><button data-report-id="${q.id}">複製問題回報文字</button></div>`;
   }
 
   function mistakeReasonLabel(key) {
@@ -713,6 +796,19 @@
   function readinessView() {
     const items = [subjectReadiness(1), subjectReadiness(2)];
     return `<section class="workspace readiness-section"><div class="section-heading"><div><p class="eyebrow">READINESS</p><h2>兩科應考準備度</h2></div><span>70 分及格線・80 分穩定目標</span></div><div class="readiness-grid">${items.map(item => `<article class="readiness-card ${item.score >= STABLE_SCORE ? "stable" : item.score >= PASS_SCORE ? "near" : "risk"}"><div><span>科目 ${item.subject}</span><strong>${item.score}<small>／100</small></strong></div><h3>${item.status}</h3><div class="readiness-meter"><i style="width:${Math.min(100, item.score)}%"></i><b style="left:70%">70</b><b style="left:80%">80</b></div><p>累積正確率 ${item.accuracyScore}%・題庫接觸 ${item.coverage}%${item.examAverage === null ? "・尚無完整模擬" : `・近 ${item.samples} 回模擬平均 ${item.examAverage} 分`}</p><small>準備度是學習指標，不是正式成績預測。</small></article>`).join("")}</div></section>`;
+  }
+
+  function qualityCenterView() {
+    const hasIssues = qualityReport.issues.length > 0;
+    return `<section class="workspace quality-section">
+      <div class="section-heading"><div><p class="eyebrow">QUESTION BANK QA</p><h2>題庫校對中心</h2></div><span>檢查日期 ${qualityReport.checkedAt}</span></div>
+      <div class="quality-overview">
+        <div class="quality-score ${hasIssues ? "has-issues" : ""}"><strong>${qualityReport.structuralPassed}</strong><span>／${qualityReport.total} 題<br>結構檢查通過</span></div>
+        <div class="quality-copy"><h3>${hasIssues ? `發現 ${qualityReport.issues.length} 項待修正` : "本版自動一致性檢查全部通過"}</h3><p>已檢查題目識別碼、四個選項、答案索引、逐項解析、歷屆題號與四份考卷順序。這能找出資料錯位，但不能取代逐字對照官方 PDF 的人工內容審查。</p><div><span>官方歷屆 ${qualityReport.officialTotal} 題</span><span>本站解析已整理 ${qualityReport.organizedAnalyses} 題</span><span>附圖／程式碼 ${qualityReport.figureCount} 題</span></div></div>
+      </div>
+      <div class="quality-papers">${qualityReport.paperChecks.map(paper => `<article class="${paper.sequenceOk ? "pass" : "fail"}"><span>${paper.sequenceOk ? "✓" : "!"}</span><div><strong>${escapeHtml(paper.label)}</strong><small>${paper.count}/50 題・${paper.sequenceOk ? "題號 1～50 完整" : "題號或題數待修"}</small></div></article>`).join("")}</div>
+      <details class="quality-details"><summary>查看檢查範圍與限制</summary><div><p><strong>自動檢查：</strong>資料欄位、題號連續性、選項數量與重複、答案是否落在 A～D、解析是否齊全。</p><p><strong>來源分流：</strong>官方公告提供題目與答案；陷阱、口訣、三步解法及錯誤選項分析均為本站整理，不代表官方說法。</p>${hasIssues ? `<ul>${qualityReport.issues.slice(0, 12).map(issue => `<li>${escapeHtml(issue.id)}｜${escapeHtml(issue.message)}</li>`).join("")}</ul>` : ""}</div></details>
+    </section>`;
   }
 
   function codeLabView() {
@@ -1036,7 +1132,7 @@
       <header class="topbar">
         <button class="brand" data-action="home" aria-label="回到首頁">
           <span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span>
-          <span><strong>iPAS 中級刷題站 <b class="version-badge">v2.2.1</b></strong><small>科目 1＋科目 2・共 ${bank.length} 題（含 ${officialPastCount} 題精修歷屆題）</small></span>
+          <span><strong>iPAS 中級刷題站 <b class="version-badge">v2.3</b></strong><small>科目 1＋科目 2・共 ${bank.length} 題（含 ${officialPastCount} 題官方歷屆題）</small></span>
         </button>
         <div class="topbar-actions">
           <button class="utility-button install-button ${isStandalone() ? "is-hidden" : ""}" data-action="install" title="安裝到桌面或手機主畫面" aria-label="安裝 App"><span aria-hidden="true">↓</span><b>安裝 App</b></button>
@@ -1070,7 +1166,7 @@
     const noteCount = Object.values(state.progress.notes).filter(note => String(note).trim()).length;
     const wrongCount = state.progress.wrongIds.length;
     const topicOptions = [...new Set(bank.filter(q => state.custom.subject === "all" || q.subject === Number(state.custom.subject)).map(q => q.topic))].sort();
-    const examHistory = state.progress.history.filter(item => item.mode === "exam" || item.mode === "past-exam").slice(0, 6);
+    const examHistory = state.progress.history.filter(item => item.mode === "exam" || item.mode === "past-exam").slice(0, 5);
     return appShell(`
       <section class="workspace intro-grid">
         <div class="intro-copy">
@@ -1086,13 +1182,13 @@
             <button class="button primary smart-start-button" data-start="smart">每日智慧 20 題｜${planDone}/20 <span>→</span></button>
             <button class="button secondary" data-start="practice">開始 10 題練習</button>
             <button class="button secondary" data-start="exam">20 題模擬考｜30 分鐘</button>
-            <button class="button secondary full-exam-button" data-start="full-exam">50 題正式節奏｜90 分鐘</button>
+            <button class="button secondary full-exam-button" data-start="full-exam">進入真實考場｜50 題 90 分鐘</button>
             <button class="button secondary" data-start="speed-exam">50 題快速衝刺｜60 分鐘</button>
             <button class="button secondary past-exam-button" data-action="past-center">完整歷屆題庫｜${officialPastCount} 題</button>
             <button class="button secondary card-practice-button" data-start="cards" ${cardCount ? "" : "disabled"}>重點卡複習｜${cardCount} 張</button>
             <button class="button secondary wrong-center-button" data-action="wrong-center">錯題中心｜${wrongCount} 題</button>
           </div>
-          <p class="simulation-note">正式節奏依 115 年簡章設定為每科 50 題、90 分鐘；60 分鐘模式標示為本站快速衝刺。</p>
+          <p class="simulation-note">真實考場會關閉即時答案與學習筆記，離開畫面仍持續計時；60 分鐘模式僅是本站快速衝刺。</p>
           <div class="data-tools">
             <button data-action="export">匯出學習進度</button>
             <button data-action="import">匯入學習進度</button>
@@ -1129,6 +1225,8 @@
       </section>
 
       ${readinessView()}
+
+      ${qualityCenterView()}
 
       ${codeLabView()}
 
@@ -1202,14 +1300,35 @@
         <div class="section-heading"><div><p class="eyebrow">MOCK EXAM</p><h2>模擬考紀錄</h2></div><span>練完第一回後開始累積趨勢</span></div>
         <div class="empty-analysis"><strong>還沒有模擬考紀錄。</strong><p>可先從 20 題快速模擬開始，再挑戰 50 題完整模擬。</p></div>
       </section>`;
+    const stability = examStability(items);
     return `
       <section class="workspace history-section">
-        <div class="section-heading"><div><p class="eyebrow">MOCK EXAM</p><h2>模擬考趨勢</h2></div><span>70 分為本站練習通過線</span></div>
+        <div class="section-heading"><div><p class="eyebrow">MOCK EXAM</p><h2>最近五次成績與穩定度</h2></div><span>70 分及格・80 分穩定目標</span></div>
+        <div class="stability-grid">
+          <article class="${stability.level}"><span>目前判定</span><strong>${stability.label}</strong><small>${stability.note}</small></article>
+          <article><span>五次平均</span><strong>${stability.average === null ? "－" : stability.average}</strong><small>${items.length}/5 回有效紀錄</small></article>
+          <article><span>達 70 分</span><strong>${stability.passCount}</strong><small>最近 ${items.length} 回</small></article>
+          <article><span>達 80 分</span><strong>${stability.stableCount}</strong><small>最近 ${items.length} 回</small></article>
+        </div>
         <div class="history-card">
           <div class="trend-bars" aria-label="最近模擬考分數趨勢">${[...items].reverse().map((item, index) => `<div class="trend-item"><div class="trend-track"><i class="${historyPassed(item) ? "pass" : ""}" style="height:${Math.max(5, item.score)}%"><b>${item.score}</b></i><span class="pass-line" aria-hidden="true"></span></div><small>第 ${Math.max(1, state.progress.history.filter(row => row.mode === "exam" || row.mode === "past-exam").length - items.length + index + 1)} 回</small></div>`).join("")}</div>
           <div class="history-list">${items.map(item => `<div class="history-row"><span>${new Date(item.date).toLocaleDateString("zh-TW", { month: "numeric", day: "numeric" })}</span><strong>${item.mode === "past-exam" ? `${escapeHtml(item.sourceYear || "歷屆考題")}・科目 ${item.sourceSubject || "－"}` : item.examKind === "full" ? "正式節奏" : item.examKind === "speed" ? "快速衝刺" : "快速模擬"}・${item.count} 題${item.averageTimeMs ? `・均 ${formatDuration(item.averageTimeMs)}` : ""}</strong><span>科 1 ${item.subject1 === null ? "－" : `${item.subject1} 分`}</span><span>科 2 ${item.subject2 === null ? "－" : `${item.subject2} 分`}</span><b class="${historyPassed(item) ? "is-pass" : ""}">${item.score} 分</b></div>`).join("")}</div>
         </div>
       </section>`;
+  }
+
+  function examStability(items) {
+    if (!items.length) return { average: null, passCount: 0, stableCount: 0, label: "資料不足", note: "先完成模擬考", level: "insufficient" };
+    const scores = items.map(item => item.score);
+    const average = Math.round(scores.reduce((sum, score) => sum + score, 0) / scores.length);
+    const passCount = scores.filter(score => score >= PASS_SCORE).length;
+    const stableCount = scores.filter(score => score >= STABLE_SCORE).length;
+    const recentThree = scores.slice(0, 3);
+    if (items.length < 3) return { average, passCount, stableCount, label: "資料不足", note: "至少完成 3 回再判斷", level: "insufficient" };
+    if (recentThree.every(score => score >= STABLE_SCORE)) return { average, passCount, stableCount, label: "穩定 80+", note: "最近 3 回都達 80 分", level: "stable" };
+    if (recentThree.every(score => score >= PASS_SCORE)) return { average, passCount, stableCount, label: "穩定及格", note: "最近 3 回都達 70 分", level: "near" };
+    if (average >= PASS_SCORE) return { average, passCount, stableCount, label: "成績波動", note: "平均達標，但仍有未過線紀錄", level: "risk" };
+    return { average, passCount, stableCount, label: "優先補強", note: "先修正高頻錯因再重測", level: "risk" };
   }
 
   function historyPassed(item) {
@@ -1236,6 +1355,7 @@
           <label>科目<select id="wrong-subject"><option value="all" ${state.wrongSubject === "all" ? "selected" : ""}>全部</option><option value="1" ${state.wrongSubject === "1" ? "selected" : ""}>科目 1</option><option value="2" ${state.wrongSubject === "2" ? "selected" : ""}>科目 2</option></select></label>
           <label>章節<select id="wrong-topic"><option value="all">全部章節</option>${topics.map(topic => `<option value="${escapeHtml(topic)}" ${state.wrongTopic === topic ? "selected" : ""}>${escapeHtml(topic)}</option>`).join("")}</select></label>
           <button class="button primary" data-action="start-wrong" ${questions.length ? "" : "disabled"}>練習篩選結果｜${questions.length} 題</button>
+          <button class="button secondary" data-action="print-handout" ${questions.length ? "" : "disabled"}>列印／存成 PDF｜${questions.length} 題</button>
           <button class="button secondary" data-action="home">回首頁</button>
         </div>
         ${reasonSummary.length ? `<div class="mistake-summary"><strong>目前最常見錯因</strong><div>${reasonSummary.map(item => `<span><b>${item.count}</b>${escapeHtml(item.label)}</span>`).join("")}</div></div>` : ""}
@@ -1243,7 +1363,7 @@
           const attempt = state.progress.attempts[q.id] || {};
           const note = state.progress.notes[q.id];
           const isCard = state.progress.cardIds.includes(q.id);
-          return `<article class="wrong-item"><div class="wrong-item-head"><div><span>科目 ${q.subject}</span><span>${escapeHtml(q.topic)}</span><span>${escapeHtml(q.difficulty)}</span></div><small>已作答 ${attempt.attempts || 0} 次</small></div><h2>${escapeHtml(q.question)}</h2><p><strong>判斷重點：</strong>${escapeHtml(q.explanation)}</p>${mistakeReasonPicker(q.id)}${codeTracePanel(q)}<div class="wrong-memory"><p><strong>常見陷阱：</strong>${escapeHtml(questionTrap(q))}</p><p><strong>記憶口訣：</strong>${escapeHtml(questionMnemonic(q))}</p></div>${sourceTraceView(q)}<div class="wrong-item-actions"><button class="mini-card-button ${isCard ? "active" : ""}" data-card-id="${q.id}">${isCard ? "★ 已收重點卡" : "☆ 加入重點卡"}</button>${note ? `<span>有個人筆記</span>` : ""}<button class="master-button" data-master-id="${q.id}">✓ 標記已掌握</button></div></article>`;
+          return `<article class="wrong-item"><div class="wrong-item-head"><div><span>科目 ${q.subject}</span><span>${escapeHtml(q.topic)}</span><span>${escapeHtml(q.difficulty)}</span></div><small>已作答 ${attempt.attempts || 0} 次</small></div><h2>${escapeHtml(q.question)}</h2><div class="print-only print-question-number">${q.sourceType === "official-past" ? `${escapeHtml(q.sourceYear)}・科目 ${q.subject}・第 ${q.sourceQuestion} 題` : `科目 ${q.subject}・本站原創題`}</div><ol class="print-only print-options">${q.options.map((option, index) => `<li class="${index === q.answer ? "correct" : ""}"><b>${letters[index]}</b> ${escapeHtml(option)}</li>`).join("")}</ol><p><strong>判斷重點：</strong>${escapeHtml(q.explanation)}</p><div class="print-only print-answer"><strong>正確答案：${letters[q.answer]}</strong><span>錯因：${escapeHtml(mistakeReasonLabel(state.progress.mistakeReasons[q.id]?.reason))}</span>${note ? `<p><strong>我的筆記：</strong>${escapeHtml(note)}</p>` : ""}</div>${mistakeReasonPicker(q.id)}${codeTracePanel(q)}<div class="wrong-memory"><p><strong>常見陷阱：</strong>${escapeHtml(questionTrap(q))}</p><p><strong>記憶口訣：</strong>${escapeHtml(questionMnemonic(q))}</p></div>${sourceTraceView(q)}<div class="wrong-item-actions"><button class="mini-card-button ${isCard ? "active" : ""}" data-card-id="${q.id}">${isCard ? "★ 已收重點卡" : "☆ 加入重點卡"}</button>${note ? `<span>有個人筆記</span>` : ""}<button class="master-button" data-master-id="${q.id}">✓ 標記已掌握</button></div></article>`;
         }).join("")}</div>` : `<div class="empty-analysis"><strong>${allWrong.length ? "目前篩選條件沒有錯題。" : "錯題已全部清空！"}</strong><p>${allWrong.length ? "換一個科目或章節看看。" : "繼續保持，之後答錯的題目會自動出現在這裡。"}</p></div>`}
       </section>`);
   }
@@ -1260,9 +1380,10 @@
   }
 
   function weakRow(item) {
+    const evidence = item.attempts >= 10 ? "樣本充足" : item.attempts >= 5 ? "初步趨勢" : "資料不足";
     return `<button class="weak-row" data-topic="${escapeHtml(item.topic)}" data-topic-subject="${item.subject}">
       <span class="weak-subject">科目 ${item.subject}</span>
-      <span class="weak-name"><strong>${escapeHtml(item.topic)}</strong><small>${item.attempts} 次作答・${item.wrong} 題待補強${item.avgSeconds ? `・平均 ${item.avgSeconds} 秒` : ""}</small></span>
+      <span class="weak-name"><strong>${escapeHtml(item.topic)}</strong><small>${item.attempts} 次作答・${item.wrong} 題待補強${item.avgSeconds ? `・平均 ${item.avgSeconds} 秒` : ""}・${evidence}</small></span>
       <span class="weak-bar"><i style="width:${item.pct}%"></i></span>
       <b>${item.pct}%</b><span class="weak-arrow" title="弱點優先分數 ${item.priority}">→</span>
     </button>`;
@@ -1305,14 +1426,14 @@
           <fieldset class="confidence"><legend>這題有多確定？</legend>${["低", "中", "高"].map(level => `<button type="button" class="confidence-button ${state.confidence === level ? "active" : ""}" data-confidence="${level}">${level}</button>`).join("")}</fieldset>
         ` : ""}
 
-        <div class="study-tools">
+        ${!isExamMode() ? `<div class="study-tools">
           <button class="card-toggle ${isCard ? "active" : ""}" data-action="toggle-card" aria-pressed="${isCard}">${isCard ? "★ 已加入重點卡" : "☆ 加入重點卡"}</button>
           <details class="note-box" ${note ? "open" : ""}>
             <summary>我的筆記${note ? "｜已儲存" : ""}</summary>
             <textarea data-note-id="${q.id}" rows="3" maxlength="600" placeholder="用自己的話寫下判斷重點，會記得更久。">${escapeHtml(note)}</textarea>
             <small>輸入後會自動儲存在目前裝置</small>
           </details>
-        </div>
+        </div>` : ""}
 
         <div class="question-actions ${isExamMode() ? "exam-actions" : ""}">
           ${isExamMode() ? `
@@ -1326,11 +1447,12 @@
     return appShell(`
       <section class="quiz-shell workspace ${isExamMode() ? "exam-shell" : ""}">
         <div class="quiz-meta">
-          <button class="back-button" data-action="quit">← ${isExamMode() ? "暫離並保存" : "結束練習"}</button>
-          <div class="question-count">${isExamMode() ? `<strong id="exam-timer">${formatTime(state.examEndsAt - Date.now())}</strong>・` : ""}第 ${state.index + 1} 題／共 ${state.quiz.length} 題</div>
+          <button class="back-button" data-action="quit">← ${isExamMode() ? "離開（計時不中止）" : "結束練習"}</button>
+          <div class="question-count">${isExamMode() ? `<strong id="exam-timer" class="exam-timer ${examTimeLevel()}">${formatTime(state.examEndsAt - Date.now())}</strong>・` : ""}第 ${state.index + 1} 題／共 ${state.quiz.length} 題</div>
           <div class="progress-track wide"><i style="width:${pct}%"></i></div>
           ${isExamMode() ? `<div id="pace-status" class="pace-status ${examPaceStatus().level}">${examPaceStatus().text}</div>` : ""}
         </div>
+        ${isExamMode() ? `<div class="exam-integrity"><div><strong>真實考場模式</strong><span>即時答案與筆記已關閉；系統自動保存，但離開畫面後倒數仍會繼續。</span></div><button data-action="fullscreen">${document.fullscreenElement ? "離開全螢幕" : "進入全螢幕"}</button></div>` : ""}
         ${isExamMode() ? `<div class="exam-layout">${card}${examNavigator()}</div>` : card}
         <p class="keyboard-hint">鍵盤快捷鍵：A～D 選答案，Enter 確認／下一題</p>
       </section>
@@ -1344,6 +1466,7 @@
       <p class="exam-checkpoint">${examCheckpointText()}</p>
       <div class="number-grid">${state.quiz.map((q, i) => `<button class="${i === state.index ? "current" : ""} ${state.examAnswers[q.id] !== undefined ? "answered" : ""} ${state.flagged.includes(q.id) ? "flagged" : ""}" data-jump="${i}" aria-label="前往第 ${i + 1} 題">${i + 1}</button>`).join("")}</div>
       <div class="nav-legend"><span><i class="answered"></i>已作答</span><span><i class="flagged"></i>待檢查</span></div>
+      <button class="fullscreen-link" data-action="fullscreen">${document.fullscreenElement ? "離開全螢幕" : "全螢幕作答"}</button>
       <button class="submit-link" data-action="submit">提前交卷</button>
     </aside>`;
   }
@@ -1485,7 +1608,7 @@
   }
 
   function exportProgress() {
-    const payload = { app: "ipas-ai-quiz", version: 221, exportedAt: new Date().toISOString(), progress: state.progress, activeExam: state.activeExam, settings };
+    const payload = { app: "ipas-ai-quiz", version: 23, exportedAt: new Date().toISOString(), progress: state.progress, activeExam: state.activeExam, settings };
     const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
     const url = URL.createObjectURL(blob);
     const anchor = document.createElement("a");
@@ -1496,6 +1619,22 @@
     anchor.remove();
     URL.revokeObjectURL(url);
     toast("學習進度已匯出。", "success");
+  }
+
+  function printWrongHandout() {
+    const count = filteredWrongQuestions().length;
+    if (!count) {
+      toast("目前篩選條件沒有可列印的錯題。", "error");
+      return;
+    }
+    const originalTitle = document.title;
+    document.title = `iPAS 個人錯題講義_${dateKey()}_${count}題`;
+    document.body.dataset.printing = "wrong-handout";
+    window.print();
+    window.setTimeout(() => {
+      document.title = originalTitle;
+      delete document.body.dataset.printing;
+    }, 500);
   }
 
   async function importProgress(file) {
@@ -1557,6 +1696,8 @@
       if (action === "start-custom") startQuiz("custom", state.custom.count);
       if (action === "export") exportProgress();
       if (action === "import") document.querySelector("#progress-file")?.click();
+      if (action === "print-handout") printWrongHandout();
+      if (action === "fullscreen") toggleFullscreen();
       if (action === "toggle-card") toggleCard(state.quiz[state.index]?.id);
       if (action === "theme") { settings.theme = effectiveTheme() === "dark" ? "light" : "dark"; saveSettings(); render(); }
       if (action === "font") { const sizes = ["normal", "large", "xlarge"]; settings.fontSize = sizes[(sizes.indexOf(settings.fontSize) + 1) % sizes.length]; saveSettings(); render(); toast(`字體已調整為${{ normal: "標準", large: "大", xlarge: "特大" }[settings.fontSize]}。`, "success"); }
@@ -1641,6 +1782,7 @@
   window.addEventListener("offline", render);
   window.addEventListener("pagehide", saveActiveExam);
   document.addEventListener("visibilitychange", () => { if (document.visibilityState === "hidden") saveActiveExam(); });
+  document.addEventListener("fullscreenchange", () => { if (isExamMode() && state.screen === "quiz") render(); });
   window.matchMedia?.("(prefers-color-scheme: dark)").addEventListener?.("change", () => {
     if (settings.theme === "system") { applySettings(); render(); }
   });
