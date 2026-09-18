@@ -1,4 +1,4 @@
-const CACHE_NAME = "ipas-quiz-v2.3";
+const CACHE_NAME = "ipas-quiz-v2.4";
 const ROOT = self.registration.scope;
 const INDEX_URL = new URL("index.html", ROOT).href;
 const PAST_FIGURES = [

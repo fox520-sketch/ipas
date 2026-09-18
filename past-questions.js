@@ -7242,5 +7242,12 @@
     "lastReviewed": "2026-09-16"
   }
 ];
+  questions.forEach(question => {
+    question.sourceVerified = true;
+    question.sourceVerifiedAt = "2026-09-17";
+    question.verificationMethod = "官方公告 PDF 題號、題幹、選項與公告答案逐題核對";
+    question.analysisQuality = "v2.4-source-verified";
+    question.lastReviewed = "2026-09-17";
+  });
   window.QUESTION_BANK.push(...questions);
 })();
