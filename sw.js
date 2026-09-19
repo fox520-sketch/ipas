@@ -1,4 +1,4 @@
-const CACHE_NAME = "ipas-quiz-v2.4";
+const CACHE_NAME = "ipas-quiz-v2.5";
 const ROOT = self.registration.scope;
 const INDEX_URL = new URL("index.html", ROOT).href;
 const PAST_FIGURES = [
@@ -24,7 +24,7 @@ const PAST_FIGURES = [
   "assets/past-figures/past-115-1-s2-49.webp",
   "assets/past-figures/past-115-1-s2-50.webp"
 ];
-const APP_SHELL = ["", "index.html", "styles.css", "questions.js", "questions-s1-extra.js", "questions-s2-extra.js", "past-questions.js", "app.js", "manifest.webmanifest", "icon-192.png", "icon-512.png", ...PAST_FIGURES]
+const APP_SHELL = ["", "index.html", "styles.css", "questions.js", "questions-s1-extra.js", "questions-s2-extra.js", "past-questions.js", "review-engine.js", "app.js", "manifest.webmanifest", "icon-192.png", "icon-512.png", ...PAST_FIGURES]
   .map(path => new URL(path, ROOT).href);
 
 self.addEventListener("install", event => {
